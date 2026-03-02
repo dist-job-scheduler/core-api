@@ -13,4 +13,6 @@ const (
 	errScheduleNameConflict  = "Schedule with this name already exists"
 	errScheduleAlreadyPaused = "Schedule is already paused"
 	errScheduleNotPaused     = "Schedule is not paused"
+
+	errTokenNotFound = "Token not found"
 )
