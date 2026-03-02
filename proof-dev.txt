@@ -1,0 +1,24 @@
+Proof of Product or Development:
+
+core backend API: https://job.enkiduck.com
+website link: https://fliq.enkiduck.com
+
+Team Overview:
+
+Erlan Belekov: Founder, Engineer. Full-time. Senior SWE with 7+ years of engineering experience. Full-stack engineering and distributed systems.
+Emirlan Rasulov: Co-Founder, Engineer. Full-time. Senior SWE with 5+ years of engineering experience. High-load distributed systems and infra experience.
+
+90-Day progress:
+
+Started working on the core API on February 22 2026.
+
+Over past week:
+- built core backend and POC
+- built scalable infrastructure
+- added observability and monitoring for production
+- started frontend development
+
+Next 90 days:
+- polish backend and UX/DX(SDK for programming languages)
+- acquire first real customers 
+- finalize frontend and user dashboard
