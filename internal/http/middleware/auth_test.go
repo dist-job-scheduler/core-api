@@ -20,9 +20,10 @@ func init() {
 
 // newEngine builds a minimal gin engine with the Auth middleware protecting GET /protected.
 // The handler writes the userID from context so we can assert it was set.
+// tokenRepo is nil because these tests only exercise the JWT path.
 func newEngine() *gin.Engine {
 	r := gin.New()
-	r.GET("/protected", middleware.Auth("", []byte(testKey)), func(c *gin.Context) {
+	r.GET("/protected", middleware.Auth("", []byte(testKey), nil), func(c *gin.Context) {
 		userID, _ := c.Get("userID")
 		c.String(http.StatusOK, "%v", userID)
 	})

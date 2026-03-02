@@ -59,12 +59,16 @@ func main() {
 	scheduleUsecase := usecase.NewScheduleUsecase(scheduleRepo, jobRepo)
 	scheduleHandler := handler.NewScheduleHandler(scheduleUsecase, logger)
 
+	// API tokens
+	tokenRepo := postgres.NewAPITokenRepository(pool)
+	tokenHandler := handler.NewTokenHandler(tokenRepo, logger)
+
 	metrics.Register()
 	checker := health.NewChecker(pool, logger, prometheus.DefaultRegisterer)
 
 	srv := http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, userRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret)),
+		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, userRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret)),
 	}
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)

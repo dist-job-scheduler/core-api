@@ -2,10 +2,13 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/repository"
 	"github.com/gin-gonic/gin"
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
@@ -14,13 +17,13 @@ import (
 
 const errUnauthorized = "Unauthorized"
 
-// Auth validates a Bearer JWT and sets "userID" in the gin context.
+// Auth validates a Bearer token and sets "userID" in the gin context.
 //
-// When jwksURL is non-empty the token is verified against the JWKS endpoint
-// (RS256 — Clerk). The key set is auto-cached and refreshed every 15 minutes.
-//
-// When jwksURL is empty, hmacKey is used for HS256 verification (legacy local dev).
-func Auth(jwksURL string, hmacKey []byte) gin.HandlerFunc {
+// Two token formats are supported:
+//   - fliq_sk_<64 hex chars>: API token — hashed and looked up in the DB via tokenRepo.
+//   - JWT (eyJ...): validated as RS256 via JWKS endpoint (Clerk) when jwksURL is set,
+//     or HS256 with hmacKey for local dev.
+func Auth(jwksURL string, hmacKey []byte, tokenRepo repository.APITokenRepository) gin.HandlerFunc {
 	var cache *jwk.Cache
 
 	if jwksURL != "" {
@@ -40,6 +43,22 @@ func Auth(jwksURL string, hmacKey []byte) gin.HandlerFunc {
 
 		rawToken := strings.TrimPrefix(header, "Bearer ")
 
+		// API token path
+		if strings.HasPrefix(rawToken, "fliq_sk_") {
+			sum := sha256.Sum256([]byte(rawToken))
+			hash := fmt.Sprintf("%x", sum)
+			tok, err := tokenRepo.FindByTokenHash(c.Request.Context(), hash)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": errUnauthorized})
+				return
+			}
+			go tokenRepo.UpdateLastUsed(context.Background(), tok.ID) //nolint:errcheck
+			c.Set("userID", tok.UserID)
+			c.Next()
+			return
+		}
+
+		// JWT path
 		var (
 			tok jwt.Token
 			err error
