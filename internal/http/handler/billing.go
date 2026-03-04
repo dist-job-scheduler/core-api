@@ -22,7 +22,8 @@ func NewBillingHandler(uc *usecase.BillingUsecase, logger *slog.Logger) *Billing
 	}
 }
 
-// GetBalance returns the authenticated user's current credit balance.
+// GetBalance returns the authenticated user's current credit balance and the
+// exchange rate so the frontend can render the top-up calculator in one call.
 // GET /billing/balance
 func (h *BillingHandler) GetBalance(c *gin.Context) {
 	userID := c.GetString("userID")
@@ -35,30 +36,31 @@ func (h *BillingHandler) GetBalance(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"balance":     balance.Balance,
-		"plan":        balance.Plan,
-		"daily_limit": balance.DailyFreeLimit,
+		"balance":            balance.Balance,
+		"plan":               balance.Plan,
+		"daily_limit":        balance.DailyFreeLimit,
+		"credits_per_dollar": h.uc.CreditsPerDollar(),
 	})
 }
 
-// CreateCheckoutSession creates a Stripe Checkout Session for a credit pack purchase.
+// CreateCheckoutSession creates a Stripe Checkout Session for a custom credit top-up.
 // POST /billing/checkout
-// Body: {"pack":"starter"}
+// Body: {"credits": 10000}
 func (h *BillingHandler) CreateCheckoutSession(c *gin.Context) {
 	userID := c.GetString("userID")
 
 	var req struct {
-		Pack string `json:"pack" binding:"required"`
+		Credits int64 `json:"credits" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	url, err := h.uc.CreateCheckoutSession(c.Request.Context(), userID, req.Pack)
+	url, err := h.uc.CreateCheckoutSession(c.Request.Context(), userID, req.Credits)
 	if err != nil {
 		h.logger.ErrorContext(c.Request.Context(), "create checkout session", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -83,7 +85,6 @@ func (h *BillingHandler) HandleWebhook(c *gin.Context) {
 
 	if err := h.uc.HandleWebhook(c.Request.Context(), payload, sig); err != nil {
 		h.logger.ErrorContext(c.Request.Context(), "handle webhook", "error", err)
-		// Return 400 so Stripe retries invalid-signature errors; 500 for transient failures.
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

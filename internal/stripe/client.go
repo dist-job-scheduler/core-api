@@ -36,13 +36,21 @@ func (c *Client) CreateCustomer(email string) (string, error) {
 }
 
 // CreateCheckoutSession creates a Stripe Checkout Session for a one-time payment.
-// metadata is attached to the session so the webhook can identify the user and pack.
-func (c *Client) CreateCheckoutSession(customerID, priceID, successURL, cancelURL string, metadata map[string]string) (string, error) {
+// amountCents is the total charge in USD cents. description appears on the invoice line.
+// metadata is attached to the session so the webhook can identify the user and credit amount.
+func (c *Client) CreateCheckoutSession(customerID string, amountCents int64, description, successURL, cancelURL string, metadata map[string]string) (string, error) {
 	params := &stripe.CheckoutSessionParams{
 		Customer: stripe.String(customerID),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
-				Price:    stripe.String(priceID),
+				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					Currency:   stripe.String("usd"),
+					UnitAmount: stripe.Int64(amountCents),
+					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+						Name:        stripe.String("Credits"),
+						Description: stripe.String(description),
+					},
+				},
 				Quantity: stripe.Int64(1),
 			},
 		},

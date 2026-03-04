@@ -22,7 +22,7 @@ func NewCreditRepository(pool *pgxpool.Pool) *CreditRepo {
 func (r *CreditRepo) EnsureExists(ctx context.Context, userID string) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO user_credits (user_id, balance, plan, refreshed_at)
-		 VALUES ($1, 5000, 'free', NOW())
+		 VALUES ($1, 500000, 'free', NOW())
 		 ON CONFLICT (user_id) DO NOTHING`,
 		userID,
 	)

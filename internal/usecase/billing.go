@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/repository"
@@ -12,18 +13,14 @@ import (
 	stripe "github.com/stripe/stripe-go/v82"
 )
 
-// CreditPack describes a purchasable credit bundle.
-type CreditPack struct {
-	Name    string
-	Credits int64
-	PriceID string
-}
+const stripeMinimumCents = 50 // Stripe enforces a $0.50 floor on USD charges
 
-// BillingConfig holds Stripe price IDs and pack definitions.
+// BillingConfig holds the exchange rate and Stripe Checkout redirect URLs.
 type BillingConfig struct {
-	Packs      []CreditPack
-	SuccessURL string
-	CancelURL  string
+	// CreditsPerDollar is the exchange rate (e.g. 1000 = 1000 credits per $1).
+	CreditsPerDollar int64
+	SuccessURL       string
+	CancelURL        string
 }
 
 // BillingUsecase handles credit balance queries, Stripe checkout, and webhook processing.
@@ -62,19 +59,24 @@ func (u *BillingUsecase) GetBalance(ctx context.Context, userID string) (*domain
 	return b, nil
 }
 
-// CreateCheckoutSession looks up (or creates) the user's Stripe customer, then
-// creates a one-time Checkout Session for the requested credit pack.
-func (u *BillingUsecase) CreateCheckoutSession(ctx context.Context, userID, packName string) (string, error) {
-	// Resolve the requested pack.
-	var pack *CreditPack
-	for i := range u.config.Packs {
-		if u.config.Packs[i].Name == packName {
-			pack = &u.config.Packs[i]
-			break
-		}
+// CreditsPerDollar returns the configured exchange rate so the frontend can
+// build a cost calculator without a separate config endpoint.
+func (u *BillingUsecase) CreditsPerDollar() int64 {
+	return u.config.CreditsPerDollar
+}
+
+// CreateCheckoutSession creates a Stripe Checkout Session for a custom credit top-up.
+// credits is the number of credits the user wants to purchase; the price is derived
+// from the CreditsPerDollar exchange rate.
+func (u *BillingUsecase) CreateCheckoutSession(ctx context.Context, userID string, credits int64) (string, error) {
+	if credits <= 0 {
+		return "", fmt.Errorf("credits must be positive")
 	}
-	if pack == nil {
-		return "", fmt.Errorf("unknown pack: %s", packName)
+
+	amountCents := (credits * 100) / u.config.CreditsPerDollar
+	if amountCents < stripeMinimumCents {
+		minCredits := stripeMinimumCents * u.config.CreditsPerDollar / 100
+		return "", fmt.Errorf("minimum purchase is %d credits ($%.2f)", minCredits, float64(stripeMinimumCents)/100)
 	}
 
 	// Look up or create a Stripe customer.
@@ -83,7 +85,8 @@ func (u *BillingUsecase) CreateCheckoutSession(ctx context.Context, userID, pack
 		return "", fmt.Errorf("find stripe customer: %w", err)
 	}
 	if customerID == "" {
-		user, err := u.users.FindByID(ctx, userID)
+		var user *domain.User
+		user, err = u.users.FindByID(ctx, userID)
 		if err != nil {
 			return "", fmt.Errorf("find user: %w", err)
 		}
@@ -95,20 +98,22 @@ func (u *BillingUsecase) CreateCheckoutSession(ctx context.Context, userID, pack
 		if err != nil {
 			return "", fmt.Errorf("create stripe customer: %w", err)
 		}
-		if err := u.stripeCustomers.Save(ctx, userID, customerID); err != nil {
+		if err = u.stripeCustomers.Save(ctx, userID, customerID); err != nil {
 			return "", fmt.Errorf("save stripe customer: %w", err)
 		}
 	}
 
-	// Create the Checkout Session with metadata so the webhook can attribute it.
+	description := fmt.Sprintf("%s credits", formatCredits(credits))
+
 	checkoutURL, err := u.stripe.CreateCheckoutSession(
 		customerID,
-		pack.PriceID,
+		amountCents,
+		description,
 		u.config.SuccessURL,
 		u.config.CancelURL,
 		map[string]string{
-			"user_id":   userID,
-			"pack_name": packName,
+			"user_id": userID,
+			"credits": strconv.FormatInt(credits, 10),
 		},
 	)
 	if err != nil {
@@ -130,29 +135,24 @@ func (u *BillingUsecase) HandleWebhook(ctx context.Context, payload []byte, sigH
 	}
 
 	var sess stripe.CheckoutSession
-	if err := json.Unmarshal(event.Data.Raw, &sess); err != nil {
+	if err = json.Unmarshal(event.Data.Raw, &sess); err != nil {
 		return fmt.Errorf("unmarshal checkout session: %w", err)
 	}
 
 	userID := sess.Metadata["user_id"]
-	packName := sess.Metadata["pack_name"]
-	if userID == "" || packName == "" {
+	creditsStr := sess.Metadata["credits"]
+	if userID == "" || creditsStr == "" {
 		u.logger.WarnContext(ctx, "checkout.session.completed missing metadata",
 			"session_id", sess.ID)
 		return nil
 	}
 
-	var pack *CreditPack
-	for i := range u.config.Packs {
-		if u.config.Packs[i].Name == packName {
-			pack = &u.config.Packs[i]
-			break
-		}
-	}
-	if pack == nil {
-		u.logger.WarnContext(ctx, "checkout.session.completed unknown pack",
-			"pack_name", packName,
-			"session_id", sess.ID)
+	credits, err := strconv.ParseInt(creditsStr, 10, 64)
+	if err != nil {
+		u.logger.WarnContext(ctx, "checkout.session.completed invalid credits metadata",
+			"session_id", sess.ID,
+			"credits_raw", creditsStr,
+		)
 		return nil
 	}
 
@@ -161,11 +161,11 @@ func (u *BillingUsecase) HandleWebhook(ctx context.Context, payload []byte, sigH
 		paymentIntentID = sess.PaymentIntent.ID
 	}
 
-	if err := u.credits.TopUp(ctx, userID, pack.Credits, paymentIntentID); err != nil {
+	if err := u.credits.TopUp(ctx, userID, credits, paymentIntentID); err != nil {
 		return fmt.Errorf("top up credits for user %s: %w", userID, err)
 	}
 
-	// After a paid purchase, upgrade the user to the paid plan.
+	// After a purchase, upgrade the user to the paid plan.
 	if err := u.credits.UpdatePlan(ctx, userID, domain.PlanPaid); err != nil {
 		u.logger.WarnContext(ctx, "failed to upgrade plan after topup", "user_id", userID, "error", err)
 		// Non-fatal: credits were already added.
@@ -173,9 +173,24 @@ func (u *BillingUsecase) HandleWebhook(ctx context.Context, payload []byte, sigH
 
 	u.logger.InfoContext(ctx, "credits topped up",
 		"user_id", userID,
-		"pack", packName,
-		"credits", pack.Credits,
+		"credits", credits,
 		"payment_intent_id", paymentIntentID,
 	)
 	return nil
+}
+
+// formatCredits formats a credit amount with thousands separators for display.
+func formatCredits(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	if len(s) <= 3 {
+		return s
+	}
+	result := make([]byte, 0, len(s)+len(s)/3)
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
 }

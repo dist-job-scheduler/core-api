@@ -28,14 +28,15 @@ type Config struct {
 	JWTSecret string `env:"JWT_SECRET"`
 
 	// Stripe
-	StripeSecretKey      string `env:"STRIPE_SECRET_KEY"`
-	StripeWebhookSecret  string `env:"STRIPE_WEBHOOK_SECRET"`
-	StripeStarterPriceID string `env:"STRIPE_PRICE_STARTER"`
-	StripeGrowthPriceID  string `env:"STRIPE_PRICE_GROWTH"`
-	StripeScalePriceID   string `env:"STRIPE_PRICE_SCALE"`
+	StripeSecretKey     string `env:"STRIPE_SECRET_KEY"`
+	StripeWebhookSecret string `env:"STRIPE_WEBHOOK_SECRET"`
 
 	// FreeCreditsPerDay is the number of credits granted daily to free-plan users.
-	FreeCreditsPerDay int `env:"FREE_CREDITS_PER_DAY" envDefault:"5000"`
+	FreeCreditsPerDay int `env:"FREE_CREDITS_PER_DAY" envDefault:"500000"`
+
+	// CreditsPerDollar controls the exchange rate (e.g. 100000 = 100k credits per $1).
+	// Minimum purchasable amount is always $0.50 (Stripe floor).
+	CreditsPerDollar int `env:"CREDITS_PER_DOLLAR" envDefault:"100000"`
 
 	// Billing URLs for Stripe Checkout redirect.
 	BillingSuccessURL string `env:"BILLING_SUCCESS_URL" envDefault:"http://localhost:3000/billing/success"`

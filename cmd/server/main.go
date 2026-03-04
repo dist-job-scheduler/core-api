@@ -59,13 +59,9 @@ func main() {
 		userRepo,
 		stripeClient,
 		usecase.BillingConfig{
-			Packs: []usecase.CreditPack{
-				{Name: "starter", Credits: 1_000, PriceID: cfg.StripeStarterPriceID},
-				{Name: "growth", Credits: 10_000, PriceID: cfg.StripeGrowthPriceID},
-				{Name: "scale", Credits: 100_000, PriceID: cfg.StripeScalePriceID},
-			},
-			SuccessURL: cfg.BillingSuccessURL,
-			CancelURL:  cfg.BillingCancelURL,
+			CreditsPerDollar: int64(cfg.CreditsPerDollar),
+			SuccessURL:       cfg.BillingSuccessURL,
+			CancelURL:        cfg.BillingCancelURL,
 		},
 		logger,
 	)
