@@ -9,6 +9,7 @@ import (
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/repository"
+	"github.com/google/uuid"
 )
 
 type JobUsecase struct {
@@ -34,6 +35,10 @@ type CreateJobInput struct {
 }
 
 func (u *JobUsecase) CreateJob(ctx context.Context, input CreateJobInput) (*domain.Job, error) {
+	if input.IdempotencyKey == "" {
+		input.IdempotencyKey = uuid.New().String()
+	}
+
 	if input.Headers == nil {
 		input.Headers = make(map[string]string)
 	}

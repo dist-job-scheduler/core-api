@@ -22,7 +22,7 @@ func NewJobHandler(jobUsecase *usecase.JobUsecase, logger *slog.Logger) *JobHand
 }
 
 type createJobRequest struct {
-	IdempotencyKey string            `json:"idempotency_key" binding:"required,max=256"`
+	IdempotencyKey string            `json:"idempotency_key" binding:"omitempty,max=256"`
 	URL            string            `json:"url"             binding:"required,url,max=2048"`
 	Method         string            `json:"method"          binding:"required,oneof=GET POST PUT PATCH DELETE"`
 	Headers        map[string]string `json:"headers"`
