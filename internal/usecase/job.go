@@ -30,7 +30,7 @@ type CreateJobInput struct {
 	Body           *string
 	TimeoutSeconds int
 	ScheduledAt    time.Time
-	MaxRetries     int
+	MaxRetries     *int
 	Backoff        domain.Backoff
 }
 
@@ -46,8 +46,9 @@ func (u *JobUsecase) CreateJob(ctx context.Context, input CreateJobInput) (*doma
 	if input.TimeoutSeconds == 0 {
 		input.TimeoutSeconds = 30
 	}
-	if input.MaxRetries == 0 {
-		input.MaxRetries = 3
+	if input.MaxRetries == nil {
+		defaultRetries := 3
+		input.MaxRetries = &defaultRetries
 	}
 	if input.Backoff == "" {
 		input.Backoff = domain.BackoffExponential
@@ -63,7 +64,7 @@ func (u *JobUsecase) CreateJob(ctx context.Context, input CreateJobInput) (*doma
 		TimeoutSeconds: input.TimeoutSeconds,
 		Status:         domain.StatusPending,
 		ScheduledAt:    input.ScheduledAt,
-		MaxRetries:     input.MaxRetries,
+		MaxRetries:     *input.MaxRetries,
 		Backoff:        input.Backoff,
 	}
 

@@ -30,7 +30,7 @@ type CreateScheduleInput struct {
 	Headers        map[string]string
 	Body           *string
 	TimeoutSeconds int
-	MaxRetries     int
+	MaxRetries     *int
 	Backoff        domain.Backoff
 }
 
@@ -46,8 +46,9 @@ func (u *ScheduleUsecase) CreateSchedule(ctx context.Context, input CreateSchedu
 	if input.TimeoutSeconds == 0 {
 		input.TimeoutSeconds = 30
 	}
-	if input.MaxRetries == 0 {
-		input.MaxRetries = 3
+	if input.MaxRetries == nil {
+		defaultRetries := 3
+		input.MaxRetries = &defaultRetries
 	}
 	if input.Backoff == "" {
 		input.Backoff = domain.BackoffExponential
@@ -64,7 +65,7 @@ func (u *ScheduleUsecase) CreateSchedule(ctx context.Context, input CreateSchedu
 		Headers:        input.Headers,
 		Body:           input.Body,
 		TimeoutSeconds: input.TimeoutSeconds,
-		MaxRetries:     input.MaxRetries,
+		MaxRetries:     *input.MaxRetries,
 		Backoff:        input.Backoff,
 		Paused:         false,
 		NextRunAt:      nextRunAt,

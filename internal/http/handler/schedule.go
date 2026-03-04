@@ -29,7 +29,7 @@ type createScheduleRequest struct {
 	Headers        map[string]string `json:"headers"`
 	Body           *string           `json:"body"`
 	TimeoutSeconds int               `json:"timeout_seconds" binding:"omitempty,min=1,max=3600"`
-	MaxRetries     int               `json:"max_retries"     binding:"omitempty,min=0,max=20"`
+	MaxRetries     *int              `json:"max_retries"     binding:"omitempty,min=0,max=20"`
 	Backoff        domain.Backoff    `json:"backoff"         binding:"omitempty,oneof=exponential linear"`
 }
 
