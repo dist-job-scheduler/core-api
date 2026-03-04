@@ -6,3 +6,4 @@
 
 # age private key (never commit)
 keys.txt
+.envrc
