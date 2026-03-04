@@ -157,12 +157,15 @@ func (h *JobHandler) Create(ctx *gin.Context) {
 		Backoff:        req.Backoff,
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrDuplicateJob) {
+		switch {
+		case errors.Is(err, domain.ErrDuplicateJob):
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": errDuplicateJob})
-			return
+		case errors.Is(err, domain.ErrInsufficientCredits):
+			ctx.JSON(http.StatusPaymentRequired, gin.H{"error": errInsufficientCredits})
+		default:
+			h.logger.ErrorContext(ctx.Request.Context(), "create job", "error", err)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
 		}
-		h.logger.ErrorContext(ctx.Request.Context(), "create job", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
 		return
 	}
 

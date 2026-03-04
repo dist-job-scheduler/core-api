@@ -46,10 +46,12 @@ func main() {
 	jobRepo := postgres.NewJobRepository(pool)
 	attemptRepo := postgres.NewAttemptRepository(pool)
 	scheduleRepo := postgres.NewScheduleRepository(pool, logger)
+	creditRepo := postgres.NewCreditRepository(pool)
 
 	worker := scheduler.NewWorker(
 		jobRepo,
 		attemptRepo,
+		creditRepo,
 		logger,
 		time.Duration(cfg.PollIntervalSec)*time.Second,
 		cfg.WorkerCount,
@@ -60,7 +62,7 @@ func main() {
 	reaper := scheduler.NewReaper(jobRepo, logger, 30*time.Second, 30*time.Second)
 	go reaper.Start(ctx)
 
-	dispatcher := scheduler.NewDispatcher(scheduleRepo, logger, time.Duration(cfg.DispatchIntervalSec)*time.Second)
+	dispatcher := scheduler.NewDispatcher(scheduleRepo, creditRepo, logger, time.Duration(cfg.DispatchIntervalSec)*time.Second)
 	go dispatcher.Start(ctx)
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)

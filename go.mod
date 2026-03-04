@@ -14,6 +14,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/slog-gin v1.21.0
+	github.com/stripe/stripe-go/v82 v82.5.1
 )
 
 require (

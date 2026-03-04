@@ -12,13 +12,15 @@ import (
 
 type Dispatcher struct {
 	scheduleRepo repository.ScheduleRepository
+	creditRepo   repository.CreditRepository
 	logger       *slog.Logger
 	interval     time.Duration
 }
 
-func NewDispatcher(repo repository.ScheduleRepository, logger *slog.Logger, interval time.Duration) *Dispatcher {
+func NewDispatcher(repo repository.ScheduleRepository, credits repository.CreditRepository, logger *slog.Logger, interval time.Duration) *Dispatcher {
 	return &Dispatcher{
 		scheduleRepo: repo,
+		creditRepo:   credits,
 		logger:       logger.With("component", "dispatcher"),
 		interval:     interval,
 	}
@@ -42,7 +44,16 @@ func (d *Dispatcher) Start(ctx context.Context) {
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context) {
-	jobs, err := d.scheduleRepo.ClaimAndFire(ctx, 100, d.computeNext)
+	creditFilter := func(filterCtx context.Context, userID string) bool {
+		ok, err := d.creditRepo.HasCredits(filterCtx, userID)
+		if err != nil {
+			d.logger.WarnContext(filterCtx, "credit check error in dispatcher, allowing job", "user_id", userID, "error", err)
+			return true // fail open: prefer firing over silently dropping
+		}
+		return ok
+	}
+
+	jobs, err := d.scheduleRepo.ClaimAndFire(ctx, 100, d.computeNext, creditFilter)
 	if err != nil {
 		d.logger.Error("dispatcher claim and fire", "error", err)
 		return

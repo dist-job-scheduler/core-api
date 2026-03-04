@@ -15,10 +15,11 @@ import (
 type JobUsecase struct {
 	repo     repository.JobRepository
 	attempts repository.AttemptRepository
+	credits  repository.CreditRepository
 }
 
-func NewJobUsecase(repo repository.JobRepository, attempts repository.AttemptRepository) *JobUsecase {
-	return &JobUsecase{repo: repo, attempts: attempts}
+func NewJobUsecase(repo repository.JobRepository, attempts repository.AttemptRepository, credits repository.CreditRepository) *JobUsecase {
+	return &JobUsecase{repo: repo, attempts: attempts, credits: credits}
 }
 
 type CreateJobInput struct {
@@ -35,6 +36,14 @@ type CreateJobInput struct {
 }
 
 func (u *JobUsecase) CreateJob(ctx context.Context, input CreateJobInput) (*domain.Job, error) {
+	ok, err := u.credits.HasCredits(ctx, input.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("check credits: %w", err)
+	}
+	if !ok {
+		return nil, domain.ErrInsufficientCredits
+	}
+
 	if input.IdempotencyKey == "" {
 		input.IdempotencyKey = uuid.New().String()
 	}

@@ -26,6 +26,20 @@ type Config struct {
 
 	// JWTSecret is used for HS256 verification in local dev (when ClerkJWKSURL is empty).
 	JWTSecret string `env:"JWT_SECRET"`
+
+	// Stripe
+	StripeSecretKey      string `env:"STRIPE_SECRET_KEY"`
+	StripeWebhookSecret  string `env:"STRIPE_WEBHOOK_SECRET"`
+	StripeStarterPriceID string `env:"STRIPE_PRICE_STARTER"`
+	StripeGrowthPriceID  string `env:"STRIPE_PRICE_GROWTH"`
+	StripeScalePriceID   string `env:"STRIPE_PRICE_SCALE"`
+
+	// FreeCreditsPerDay is the number of credits granted daily to free-plan users.
+	FreeCreditsPerDay int `env:"FREE_CREDITS_PER_DAY" envDefault:"5000"`
+
+	// Billing URLs for Stripe Checkout redirect.
+	BillingSuccessURL string `env:"BILLING_SUCCESS_URL" envDefault:"http://localhost:3000/billing/success"`
+	BillingCancelURL  string `env:"BILLING_CANCEL_URL" envDefault:"http://localhost:3000/billing/cancel"`
 }
 
 func Load() (*Config, error) {

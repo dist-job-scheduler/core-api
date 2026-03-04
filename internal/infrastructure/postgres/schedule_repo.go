@@ -135,7 +135,9 @@ func (r *ScheduleRepository) Delete(ctx context.Context, id, userID string) erro
 
 // ClaimAndFire atomically claims due schedules, inserts a job for each, and advances next_run_at.
 // All operations happen in a single transaction — no partial state on crash.
-func (r *ScheduleRepository) ClaimAndFire(ctx context.Context, limit int, computeNext func(*domain.Schedule) time.Time) ([]*domain.Job, error) {
+// creditFilter is evaluated per schedule; if it returns false the job is skipped but
+// next_run_at is still advanced so the schedule is not stuck.
+func (r *ScheduleRepository) ClaimAndFire(ctx context.Context, limit int, computeNext func(*domain.Schedule) time.Time, creditFilter func(ctx context.Context, userID string) bool) ([]*domain.Job, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -179,6 +181,23 @@ func (r *ScheduleRepository) ClaimAndFire(ctx context.Context, limit int, comput
 	for _, s := range schedules {
 		next := computeNext(s)
 		idempotencyKey := fmt.Sprintf("sched:%s:%d", s.ID, s.NextRunAt.Unix())
+
+		// Check credits before inserting. creditFilter uses a separate connection
+		// (not this tx), so it is non-transactional but safe for a best-effort gate.
+		if !creditFilter(ctx, s.UserID) {
+			r.logger.WarnContext(ctx, "skipping cron job: insufficient credits",
+				"schedule_id", s.ID,
+				"user_id", s.UserID,
+			)
+			// Still advance next_run_at so the schedule progresses.
+			if _, updateErr := tx.Exec(ctx,
+				`UPDATE schedules SET next_run_at = $2, last_run_at = NOW(), updated_at = NOW() WHERE id = $1`,
+				s.ID, next,
+			); updateErr != nil {
+				return nil, fmt.Errorf("advance schedule %s: %w", s.ID, updateErr)
+			}
+			continue
+		}
 
 		// Insert the job — idempotency key guards against any edge-case duplicate fire.
 		var j domain.Job

@@ -15,4 +15,6 @@ const (
 	errScheduleNotPaused     = "Schedule is not paused"
 
 	errTokenNotFound = "Token not found"
+
+	errInsufficientCredits = "Insufficient credits"
 )

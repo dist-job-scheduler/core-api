@@ -19,6 +19,7 @@ type Worker struct {
 	id           string
 	repo         repository.JobRepository
 	attempts     repository.AttemptRepository
+	credits      repository.CreditRepository
 	executor     *Executor
 	logger       *slog.Logger
 	pollInterval time.Duration
@@ -29,6 +30,7 @@ type Worker struct {
 func NewWorker(
 	repo repository.JobRepository,
 	attempts repository.AttemptRepository,
+	credits repository.CreditRepository,
 	logger *slog.Logger,
 	pollInterval time.Duration,
 	concurrency int,
@@ -39,6 +41,7 @@ func NewWorker(
 		id:           id,
 		repo:         repo,
 		attempts:     attempts,
+		credits:      credits,
 		executor:     NewExecutor(logger),
 		logger:       logger.With("worker_id", id),
 		pollInterval: pollInterval,
@@ -118,6 +121,21 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 		return
 	}
 
+	// Gate 2: check credits before executing (catches retries for users who ran out).
+	// Fail immediately rather than executing and wasting a remote call.
+	ok, err := w.credits.HasCredits(ctx, job.UserID)
+	if err != nil {
+		w.logger.WarnContext(ctx, "credit check failed, proceeding anyway", "job_id", job.ID, "error", err)
+	} else if !ok {
+		errMsg := "insufficient credits"
+		w.closeAttempt(ctx, attempt, nil, &errMsg, time.Since(startedAt).Milliseconds())
+		if failErr := w.repo.Fail(ctx, job.ID, errMsg); failErr != nil {
+			w.logger.ErrorContext(ctx, "mark job failed (no credits)", "job_id", job.ID, "error", failErr)
+		}
+		w.logger.WarnContext(ctx, "job permanently failed: insufficient credits", "job_id", job.ID)
+		return
+	}
+
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	defer cancelHeartbeat()
 	go w.heartbeat(heartbeatCtx, job.ID)
@@ -126,6 +144,15 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 
 	result := w.executor.Run(ctx, job)
 	durationMS := time.Since(startedAt).Milliseconds()
+
+	// Deduct 1 credit for this execution attempt, regardless of outcome.
+	// Placed here (after HTTP call, before outcome branch) so we always charge
+	// for work done. A crash between Run() and here means the job is re-attempted
+	// by the reaper; the user gets one free attempt in that rare case — acceptable.
+	if deductErr := w.credits.Deduct(ctx, job.UserID, job.ID); deductErr != nil {
+		w.logger.WarnContext(ctx, "credit deduction failed", "job_id", job.ID, "error", deductErr)
+		// Non-fatal: job outcome is not affected.
+	}
 
 	if result.Err == nil && result.StatusCode == http.StatusOK {
 		metrics.JobExecutionDuration.WithLabelValues("success").Observe(result.Duration.Seconds())

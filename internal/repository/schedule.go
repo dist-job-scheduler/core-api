@@ -20,6 +20,8 @@ type ScheduleRepository interface {
 	List(ctx context.Context, input ListSchedulesInput) ([]*domain.Schedule, error)
 	SetPaused(ctx context.Context, id, userID string, paused bool) error
 	Delete(ctx context.Context, id, userID string) error
-	// Atomic: claim due schedules, create jobs, advance next_run_at — all in one tx
-	ClaimAndFire(ctx context.Context, limit int, computeNext func(*domain.Schedule) time.Time) ([]*domain.Job, error)
+	// Atomic: claim due schedules, create jobs, advance next_run_at — all in one tx.
+	// creditFilter is called per schedule before inserting the job; returning false
+	// skips the job but still advances next_run_at.
+	ClaimAndFire(ctx context.Context, limit int, computeNext func(*domain.Schedule) time.Time, creditFilter func(ctx context.Context, userID string) bool) ([]*domain.Job, error)
 }

@@ -11,7 +11,7 @@ import (
 	sloggin "github.com/samber/slog-gin"
 )
 
-func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, userRepo repository.UserRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte) *gin.Engine {
+func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -20,7 +20,7 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	r.Use(middleware.Metrics())
 
 	authMW := middleware.Auth(jwksURL, hmacKey, tokenRepo)
-	ensureUser := middleware.EnsureUser(userRepo, logger)
+	ensureUser := middleware.EnsureUser(userRepo, creditRepo, logger)
 
 	// Protected job routes
 	jobs := r.Group("/jobs", authMW, ensureUser)
@@ -45,6 +45,14 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	tokens.POST("", tokenHandler.Create)
 	tokens.GET("", tokenHandler.List)
 	tokens.DELETE("/:id", tokenHandler.Delete)
+
+	// Protected billing routes
+	billing := r.Group("/billing", authMW, ensureUser)
+	billing.GET("/balance", billingHandler.GetBalance)
+	billing.POST("/checkout", billingHandler.CreateCheckoutSession)
+
+	// Webhook has no auth middleware — verified by Stripe signature
+	r.POST("/billing/webhook", billingHandler.HandleWebhook)
 
 	return r
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/metrics"
 	httptransport "github.com/ErlanBelekov/dist-job-scheduler/internal/http"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/http/handler"
+	stripeclient "github.com/ErlanBelekov/dist-job-scheduler/internal/stripe"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/usecase"
 	"github.com/gin-gonic/gin"
 	"github.com/lmittmann/tint"
@@ -48,10 +49,32 @@ func main() {
 	// Users
 	userRepo := postgres.NewUserRepository(pool)
 
+	// Billing
+	creditRepo := postgres.NewCreditRepository(pool)
+	stripeCustomerRepo := postgres.NewStripeCustomerRepository(pool)
+	stripeClient := stripeclient.New(cfg.StripeSecretKey, cfg.StripeWebhookSecret)
+	billingUsecase := usecase.NewBillingUsecase(
+		creditRepo,
+		stripeCustomerRepo,
+		userRepo,
+		stripeClient,
+		usecase.BillingConfig{
+			Packs: []usecase.CreditPack{
+				{Name: "starter", Credits: 1_000, PriceID: cfg.StripeStarterPriceID},
+				{Name: "growth", Credits: 10_000, PriceID: cfg.StripeGrowthPriceID},
+				{Name: "scale", Credits: 100_000, PriceID: cfg.StripeScalePriceID},
+			},
+			SuccessURL: cfg.BillingSuccessURL,
+			CancelURL:  cfg.BillingCancelURL,
+		},
+		logger,
+	)
+	billingHandler := handler.NewBillingHandler(billingUsecase, logger)
+
 	// Jobs
 	jobRepo := postgres.NewJobRepository(pool)
 	attemptRepo := postgres.NewAttemptRepository(pool)
-	jobUsecase := usecase.NewJobUsecase(jobRepo, attemptRepo)
+	jobUsecase := usecase.NewJobUsecase(jobRepo, attemptRepo, creditRepo)
 	jobHandler := handler.NewJobHandler(jobUsecase, logger)
 
 	// Schedules
@@ -68,7 +91,7 @@ func main() {
 
 	srv := http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, userRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret)),
+		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret)),
 	}
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)
