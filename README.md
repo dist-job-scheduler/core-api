@@ -1,17 +1,46 @@
-# dist-job-scheduler
+# Fliq
 
-A distributed HTTP job scheduler. Clients POST a job with a target URL, method, headers, body, and a UTC fire time. Workers claim and execute them with sub-2s latency; failed jobs retry with configurable exponential or linear backoff.
+**Reliable HTTP job scheduling for developers and engineering teams.**
+
+Stop reinventing cron. Fliq lets you schedule one-off HTTP calls and recurring cron jobs with a single API call — with built-in retries, crash recovery, and per-execution history. Whether you're triggering a webhook at a specific time or running a recurring data pipeline, Fliq handles the reliability layer so you don't have to.
+
+---
+
+## Why Fliq
+
+**For startups** — Ship faster. Don't burn a sprint building a job queue. POST a job, move on. Fliq handles delivery, retries, and failure visibility out of the box.
+
+**For developers** — No SDKs, no magic. A clean REST API, API token auth (`fliq_sk_*`), idempotency keys, and full execution history per job. Works with any HTTP endpoint.
+
+**For engineering leaders** — One less piece of infrastructure to own. Postgres-native, no Redis or Kafka required. Sub-2s pickup latency. Exactly-once execution via row-level locking. Designed to scale.
+
+---
+
+## Pricing
+
+| Plan | Executions | Price |
+|---|---|---|
+| Free | 5,000 / day | $0 |
+| Pay-as-you-go | Unlimited | $1 per 100,000 executions |
+
+No seat fees. No contracts. Pay only for what you execute.
+
+---
 
 ## What's built
 
 | Area | Status |
 |---|---|
-| Job scheduling — create, claim, execute, retry | ✅ Done |
+| One-off job scheduling — create, claim, execute, retry | ✅ Done |
+| Cron schedules — recurring jobs with pause/resume | ✅ Done |
 | Exactly-once execution (FOR UPDATE SKIP LOCKED + reaper) | ✅ Done |
 | Crash recovery (heartbeat + reaper process) | ✅ Done |
-| Magic-link authentication + JWT | ✅ Done |
+| API token auth (`fliq_sk_*`) + Clerk JWT | ✅ Done |
 | Per-user job isolation (ownership enforced at query level) | ✅ Done |
+| Credit system — free tier + pay-as-you-go via Stripe | ✅ Done |
 | CI pipeline (lint, tests, migrations against real Postgres) | ✅ Done |
+
+---
 
 ## System map
 
@@ -23,23 +52,10 @@ A distributed HTTP job scheduler. Clients POST a job with a target URL, method, 
     │                                         │
     ▼                                         ▼
 [ PostgreSQL ] ◄──────────────── [ scheduler ]
-                                  Worker + Reaper + Executor
+                                  Worker + Reaper + Dispatcher + Executor
 ```
 
-Future state (see Roadmap below):
-
-```
-[ Browser ]
-    │
-    ▼
-[ Frontend ]
-    │  GraphQL
-    ▼
-[ GraphQL Gateway ]
-    │  REST
-    ▼
-[ server ]  ──── [ PostgreSQL ] ──── [ scheduler ]
-```
+---
 
 ## Stack
 
@@ -49,9 +65,12 @@ Future state (see Roadmap below):
 | Web framework | Gin |
 | Database | PostgreSQL via `pgx/v5` |
 | Migrations | goose |
-| Auth | Magic links → JWT HS256; email via Resend (logged locally) |
+| Auth | Clerk (JWT RS256 via JWKS) + API tokens (HS256 fallback for local dev) |
+| Billing | Stripe — webhooks + credit system |
 | Config | `caarlos0/env` — struct tags, no `.env` files in Go code |
 | Linter | golangci-lint v2 |
+
+---
 
 ## Local dev
 
@@ -67,7 +86,7 @@ go run ./cmd/server        # terminal 1
 go run ./cmd/scheduler     # terminal 2
 ```
 
-See `CLAUDE.md` for the full local setup guide, auth flow walkthrough, and coding conventions.
+See `CLAUDE.md` for the full local setup guide and coding conventions.
 
 ---
 
@@ -75,12 +94,14 @@ See `CLAUDE.md` for the full local setup guide, auth flow walkthrough, and codin
 
 ### Phase 1 — Core backend ✅
 - Job CRUD, worker, reaper, retry with backoff
+- Cron schedules with pause/resume
 - Exactly-once execution via Postgres row-level locking
-- Magic-link auth + JWT; jobs scoped to authenticated users
+- API token auth + Clerk JWT; jobs scoped to authenticated users
+- Credit system: free tier (5k/day) + pay-as-you-go via Stripe
 - CI: lint + test + migrations on every PR
 
 ### Phase 2 — Deployment 🔄 In progress
-- Docker images (already present: `Dockerfile.server`, `Dockerfile.scheduler`, `Dockerfile.migrate`)
+- Docker images (`Dockerfile.server`, `Dockerfile.scheduler`, `Dockerfile.migrate`)
 - Deploy to K8S on rented VM
 - Staging and production environments
 - Terraform for infra provisioning (Enkidu)
@@ -88,19 +109,8 @@ See `CLAUDE.md` for the full local setup guide, auth flow walkthrough, and codin
 ### Phase 3 — Observability
 - OpenTelemetry instrumentation (traces + metrics)
 - Prometheus + Grafana dashboards
-- Key metrics to track:
-  - Job pickup latency (created → running)
-  - Reaper rescue rate (target: <1% of jobs)
-  - Worker instance lifetime and shutdown count
-  - API error rate and p99 latency
+- Key metrics: job pickup latency, reaper rescue rate, worker lifetime, API p99
 
-### Phase 4 — Frontend & GraphQL gateway
-- **Frontend repo** — separate repository, TBD stack
-- **GraphQL gateway** — sits between the frontend and core services; aggregates and shapes data for UI consumption
-- Additional API endpoints needed before gateway:
-  - Execution history per job
-  - Job listing with filters (status, date range)
-
-### Phase 5 — Documentation site
-- Public-facing docs for the scheduler API
-- Planned for after the frontend and gateway are stable
+### Phase 4 — Frontend
+- Dashboard: job list, execution history, schedule management
+- Docs integrated into the website — simple, developer-focused
