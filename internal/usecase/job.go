@@ -33,6 +33,8 @@ type CreateJobInput struct {
 	ScheduledAt    time.Time
 	MaxRetries     *int
 	Backoff        domain.Backoff
+	WebhookURL     *string
+	WebhookHeaders map[string]string
 }
 
 func (u *JobUsecase) CreateJob(ctx context.Context, input CreateJobInput) (*domain.Job, error) {
@@ -75,6 +77,8 @@ func (u *JobUsecase) CreateJob(ctx context.Context, input CreateJobInput) (*doma
 		ScheduledAt:    input.ScheduledAt,
 		MaxRetries:     *input.MaxRetries,
 		Backoff:        input.Backoff,
+		WebhookURL:     input.WebhookURL,
+		WebhookHeaders: input.WebhookHeaders,
 	}
 
 	created, err := u.repo.Create(ctx, job)

@@ -28,6 +28,8 @@ type Schedule struct {
 	Paused         bool
 	NextRunAt      time.Time
 	LastRunAt      *time.Time
+	WebhookURL     *string
+	WebhookHeaders map[string]string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }

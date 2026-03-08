@@ -481,9 +481,30 @@ data:
           "targets": [{ "expr": "sum(rate(scheduler_reaper_rescued_total{action=\"rescheduled\"}[5m])) / sum(rate(scheduler_jobs_completed_total[5m]))", "legendFormat": "rescue rate" }]
         },
         {
-          "title": "Memory Usage",
+          "title": "Webhook Deliveries",
           "type": "timeseries",
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 46 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "stacking": { "mode": "normal" } }, "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(rate(scheduler_webhook_deliveries_total[5m])) by (outcome)", "legendFormat": "{{outcome}}" }
+          ]
+        },
+        {
+          "title": "Webhook Latency (P50 / P95)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 46 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 5 }, "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, sum(rate(scheduler_webhook_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P50" },
+            { "expr": "histogram_quantile(0.95, sum(rate(scheduler_webhook_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P95" }
+          ]
+        },
+        {
+          "title": "Memory Usage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 54 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "bytes" }, "overrides": [] },
           "targets": [
@@ -495,7 +516,7 @@ data:
         {
           "title": "CPU Usage",
           "type": "timeseries",
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 46 },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 54 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "short" }, "overrides": [] },
           "targets": [
@@ -505,7 +526,7 @@ data:
         {
           "title": "GC Duration",
           "type": "timeseries",
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 54 },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 62 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 5 }, "unit": "s" }, "overrides": [] },
           "targets": [
@@ -516,7 +537,7 @@ data:
         {
           "title": "Goroutines",
           "type": "timeseries",
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 54 },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 62 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "short" }, "overrides": [] },
           "targets": [
@@ -526,7 +547,7 @@ data:
         {
           "title": "Server Logs",
           "type": "logs",
-          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 62 },
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 70 },
           "datasource": { "type": "loki", "uid": "loki" },
           "options": {
             "showTime": true,
@@ -548,7 +569,7 @@ data:
         {
           "title": "Scheduler Logs",
           "type": "logs",
-          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 72 },
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 80 },
           "datasource": { "type": "loki", "uid": "loki" },
           "options": {
             "showTime": true,
@@ -570,7 +591,7 @@ data:
         {
           "title": "Migration Logs",
           "type": "logs",
-          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 82 },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 90 },
           "datasource": { "type": "loki", "uid": "loki" },
           "options": {
             "showTime": true,

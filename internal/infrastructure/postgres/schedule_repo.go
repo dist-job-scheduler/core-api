@@ -28,15 +28,17 @@ func (r *ScheduleRepository) Create(ctx context.Context, s *domain.Schedule) (*d
 	query := `
 		INSERT INTO schedules (
 			user_id, name, cron_expr, url, method, headers, body,
-			timeout_seconds, max_retries, backoff, paused, next_run_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			timeout_seconds, max_retries, backoff, paused, next_run_at,
+			webhook_url, webhook_headers
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id, user_id, name, cron_expr, url, method, headers, body,
 		          timeout_seconds, max_retries, backoff, paused,
-		          next_run_at, last_run_at, created_at, updated_at`
+		          next_run_at, last_run_at, webhook_url, webhook_headers, created_at, updated_at`
 
 	row := r.pool.QueryRow(ctx, query,
 		s.UserID, s.Name, s.CronExpr, s.URL, s.Method, s.Headers, s.Body,
 		s.TimeoutSeconds, s.MaxRetries, s.Backoff, s.Paused, s.NextRunAt,
+		s.WebhookURL, s.WebhookHeaders,
 	)
 
 	created, err := scanSchedule(row)
@@ -54,7 +56,7 @@ func (r *ScheduleRepository) GetByID(ctx context.Context, id, userID string) (*d
 	query := `
 		SELECT id, user_id, name, cron_expr, url, method, headers, body,
 		       timeout_seconds, max_retries, backoff, paused,
-		       next_run_at, last_run_at, created_at, updated_at
+		       next_run_at, last_run_at, webhook_url, webhook_headers, created_at, updated_at
 		FROM schedules
 		WHERE id = $1 AND user_id = $2`
 
@@ -75,7 +77,7 @@ func (r *ScheduleRepository) List(ctx context.Context, input repository.ListSche
 	query := fmt.Sprintf(`
 		SELECT id, user_id, name, cron_expr, url, method, headers, body,
 		       timeout_seconds, max_retries, backoff, paused,
-		       next_run_at, last_run_at, created_at, updated_at
+		       next_run_at, last_run_at, webhook_url, webhook_headers, created_at, updated_at
 		FROM schedules
 		WHERE %s
 		ORDER BY created_at DESC, id DESC
@@ -152,7 +154,7 @@ func (r *ScheduleRepository) ClaimAndFire(ctx context.Context, limit int, comput
 	rows, err := tx.Query(ctx, `
 		SELECT id, user_id, name, cron_expr, url, method, headers, body,
 		       timeout_seconds, max_retries, backoff, paused,
-		       next_run_at, last_run_at, created_at, updated_at
+		       next_run_at, last_run_at, webhook_url, webhook_headers, created_at, updated_at
 		FROM schedules
 		WHERE next_run_at <= NOW() AND NOT paused
 		ORDER BY next_run_at ASC
@@ -204,20 +206,24 @@ func (r *ScheduleRepository) ClaimAndFire(ctx context.Context, limit int, comput
 		scanErr := tx.QueryRow(ctx, `
 			INSERT INTO jobs (
 				user_id, idempotency_key, url, method, headers, body,
-				timeout_seconds, status, scheduled_at, max_retries, backoff, schedule_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), $8, $9, $10)
+				timeout_seconds, status, scheduled_at, max_retries, backoff, schedule_id,
+				webhook_url, webhook_headers
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), $8, $9, $10, $11, $12)
 			RETURNING id, user_id, idempotency_key, url, method, headers, body,
 			          timeout_seconds, status, scheduled_at, retry_count,
 			          max_retries, backoff, claimed_at, claimed_by,
-			          heartbeat_at, completed_at, last_error, created_at, updated_at, schedule_id`,
+			          heartbeat_at, completed_at, last_error, created_at, updated_at, schedule_id,
+			          webhook_url, webhook_headers`,
 			s.UserID, idempotencyKey, s.URL, s.Method, s.Headers, s.Body,
 			s.TimeoutSeconds, s.MaxRetries, s.Backoff, s.ID,
+			s.WebhookURL, s.WebhookHeaders,
 		).Scan(
 			&j.ID, &j.UserID, &j.IdempotencyKey, &j.URL, &j.Method, &j.Headers, &j.Body,
 			&j.TimeoutSeconds, &j.Status, &j.ScheduledAt, &j.RetryCount,
 			&j.MaxRetries, &j.Backoff, &j.ClaimedAt, &j.ClaimedBy,
 			&j.HeartbeatAt, &j.CompletedAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt,
 			&j.ScheduleID,
+			&j.WebhookURL, &j.WebhookHeaders,
 		)
 		if scanErr != nil {
 			var pgErr *pgconn.PgError
@@ -255,7 +261,7 @@ func scanSchedule(row rowScanner) (*domain.Schedule, error) {
 	err := row.Scan(
 		&s.ID, &s.UserID, &s.Name, &s.CronExpr, &s.URL, &s.Method, &s.Headers, &s.Body,
 		&s.TimeoutSeconds, &s.MaxRetries, &s.Backoff, &s.Paused,
-		&s.NextRunAt, &s.LastRunAt, &s.CreatedAt, &s.UpdatedAt,
+		&s.NextRunAt, &s.LastRunAt, &s.WebhookURL, &s.WebhookHeaders, &s.CreatedAt, &s.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

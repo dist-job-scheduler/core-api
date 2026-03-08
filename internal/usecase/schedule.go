@@ -32,6 +32,8 @@ type CreateScheduleInput struct {
 	TimeoutSeconds int
 	MaxRetries     *int
 	Backoff        domain.Backoff
+	WebhookURL     *string
+	WebhookHeaders map[string]string
 }
 
 func (u *ScheduleUsecase) CreateSchedule(ctx context.Context, input CreateScheduleInput) (*domain.Schedule, error) {
@@ -69,6 +71,8 @@ func (u *ScheduleUsecase) CreateSchedule(ctx context.Context, input CreateSchedu
 		Backoff:        input.Backoff,
 		Paused:         false,
 		NextRunAt:      nextRunAt,
+		WebhookURL:     input.WebhookURL,
+		WebhookHeaders: input.WebhookHeaders,
 	}
 
 	created, err := u.repo.Create(ctx, s)

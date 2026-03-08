@@ -31,6 +31,8 @@ type createJobRequest struct {
 	ScheduledAt    time.Time         `json:"scheduled_at"    binding:"required"`
 	MaxRetries     *int              `json:"max_retries"     binding:"omitempty,min=0,max=20"`
 	Backoff        domain.Backoff    `json:"backoff"         binding:"omitempty,oneof=exponential linear"`
+	WebhookURL     *string           `json:"webhook_url"     binding:"omitempty,url,max=2048"`
+	WebhookHeaders map[string]string `json:"webhook_headers"`
 }
 
 type createJobResponse struct {
@@ -47,6 +49,7 @@ type getJobResponse struct {
 	CompletedAt *time.Time    `json:"completed_at,omitempty"`
 	LastError   *string       `json:"last_error,omitempty"`
 	ScheduleID  *string       `json:"schedule_id,omitempty"`
+	WebhookURL  *string       `json:"webhook_url,omitempty"`
 }
 
 type listJobItem struct {
@@ -59,6 +62,7 @@ type listJobItem struct {
 	CompletedAt *time.Time    `json:"completed_at,omitempty"`
 	LastError   *string       `json:"last_error,omitempty"`
 	ScheduleID  *string       `json:"schedule_id,omitempty"`
+	WebhookURL  *string       `json:"webhook_url,omitempty"`
 }
 
 type listJobsResponse struct {
@@ -129,6 +133,7 @@ func (h *JobHandler) List(ctx *gin.Context) {
 			CompletedAt: j.CompletedAt,
 			LastError:   j.LastError,
 			ScheduleID:  j.ScheduleID,
+			WebhookURL:  j.WebhookURL,
 		}
 	}
 	ctx.JSON(http.StatusOK, listJobsResponse{
@@ -155,6 +160,8 @@ func (h *JobHandler) Create(ctx *gin.Context) {
 		ScheduledAt:    req.ScheduledAt,
 		MaxRetries:     req.MaxRetries,
 		Backoff:        req.Backoff,
+		WebhookURL:     req.WebhookURL,
+		WebhookHeaders: req.WebhookHeaders,
 	})
 	if err != nil {
 		switch {
@@ -229,5 +236,6 @@ func (h *JobHandler) GetByID(ctx *gin.Context) {
 		CompletedAt: job.CompletedAt,
 		LastError:   job.LastError,
 		ScheduleID:  job.ScheduleID,
+		WebhookURL:  job.WebhookURL,
 	})
 }

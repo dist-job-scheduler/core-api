@@ -48,10 +48,13 @@ func main() {
 	scheduleRepo := postgres.NewScheduleRepository(pool, logger)
 	creditRepo := postgres.NewCreditRepository(pool)
 
+	notifier := scheduler.NewWebhookNotifier(logger)
+
 	worker := scheduler.NewWorker(
 		jobRepo,
 		attemptRepo,
 		creditRepo,
+		notifier,
 		logger,
 		time.Duration(cfg.PollIntervalSec)*time.Second,
 		cfg.WorkerCount,

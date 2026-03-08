@@ -81,6 +81,21 @@ var (
 		Name:      "http_requests_total",
 		Help:      "Total HTTP requests.",
 	}, []string{"method", "path", "status"})
+
+	// Webhook metrics
+
+	WebhookDeliveriesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "scheduler",
+		Name:      "webhook_deliveries_total",
+		Help:      "Total webhook delivery attempts, by outcome.",
+	}, []string{"outcome"})
+
+	WebhookDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "scheduler",
+		Name:      "webhook_duration_seconds",
+		Help:      "Duration of webhook HTTP calls.",
+		Buckets:   []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10},
+	})
 )
 
 func Register() {
@@ -95,6 +110,8 @@ func Register() {
 		WorkerShutdownsTotal,
 		HTTPRequestDuration,
 		HTTPRequestsTotal,
+		WebhookDeliveriesTotal,
+		WebhookDuration,
 	)
 }
 

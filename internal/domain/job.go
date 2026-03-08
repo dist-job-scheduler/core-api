@@ -54,6 +54,9 @@ type Job struct {
 
 	ScheduleID *string `json:"scheduleID,omitempty"`
 
+	WebhookURL     *string           `json:"webhookURL,omitempty"`
+	WebhookHeaders map[string]string `json:"webhookHeaders,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }

@@ -31,6 +31,8 @@ type createScheduleRequest struct {
 	TimeoutSeconds int               `json:"timeout_seconds" binding:"omitempty,min=1,max=3600"`
 	MaxRetries     *int              `json:"max_retries"     binding:"omitempty,min=0,max=20"`
 	Backoff        domain.Backoff    `json:"backoff"         binding:"omitempty,oneof=exponential linear"`
+	WebhookURL     *string           `json:"webhook_url"     binding:"omitempty,url,max=2048"`
+	WebhookHeaders map[string]string `json:"webhook_headers"`
 }
 
 type scheduleResponse struct {
@@ -46,6 +48,7 @@ type scheduleResponse struct {
 	NextRunAt      time.Time      `json:"next_run_at"`
 	LastRunAt      *time.Time     `json:"last_run_at,omitempty"`
 	CreatedAt      time.Time      `json:"created_at"`
+	WebhookURL     *string        `json:"webhook_url,omitempty"`
 }
 
 func toScheduleResponse(s *domain.Schedule) scheduleResponse {
@@ -62,6 +65,7 @@ func toScheduleResponse(s *domain.Schedule) scheduleResponse {
 		NextRunAt:      s.NextRunAt,
 		LastRunAt:      s.LastRunAt,
 		CreatedAt:      s.CreatedAt,
+		WebhookURL:     s.WebhookURL,
 	}
 }
 
@@ -88,6 +92,8 @@ func (h *ScheduleHandler) Create(ctx *gin.Context) {
 		TimeoutSeconds: req.TimeoutSeconds,
 		MaxRetries:     req.MaxRetries,
 		Backoff:        req.Backoff,
+		WebhookURL:     req.WebhookURL,
+		WebhookHeaders: req.WebhookHeaders,
 	})
 	if err != nil {
 		switch {
@@ -235,6 +241,7 @@ func (h *ScheduleHandler) ListJobs(ctx *gin.Context) {
 			CompletedAt: j.CompletedAt,
 			LastError:   j.LastError,
 			ScheduleID:  j.ScheduleID,
+			WebhookURL:  j.WebhookURL,
 		}
 	}
 	ctx.JSON(http.StatusOK, gin.H{
