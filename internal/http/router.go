@@ -50,6 +50,7 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	billing := r.Group("/billing", authMW, ensureUser)
 	billing.GET("/balance", billingHandler.GetBalance)
 	billing.POST("/checkout", billingHandler.CreateCheckoutSession)
+	billing.GET("/transactions", billingHandler.ListTransactions)
 
 	// Webhook has no auth middleware — verified by Stripe signature
 	r.POST("/billing/webhook", billingHandler.HandleWebhook)

@@ -51,6 +51,13 @@ func NewBillingUsecase(
 	}
 }
 
+func (u *BillingUsecase) ListTransactions(ctx context.Context, userID, cursor string, limit int) ([]domain.CreditTransaction, string, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	return u.credits.ListTransactions(ctx, userID, cursor, limit)
+}
+
 func (u *BillingUsecase) GetBalance(ctx context.Context, userID string) (*domain.CreditBalance, error) {
 	b, err := u.credits.GetBalance(ctx, userID)
 	if err != nil {

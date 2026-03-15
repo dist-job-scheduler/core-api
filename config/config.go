@@ -39,8 +39,8 @@ type Config struct {
 	CreditsPerDollar int `env:"CREDITS_PER_DOLLAR" envDefault:"100000"`
 
 	// Billing URLs for Stripe Checkout redirect.
-	BillingSuccessURL string `env:"BILLING_SUCCESS_URL" envDefault:"http://localhost:3000/billing/success"`
-	BillingCancelURL  string `env:"BILLING_CANCEL_URL" envDefault:"http://localhost:3000/billing/cancel"`
+	BillingSuccessURL string `env:"BILLING_SUCCESS_URL" envDefault:"http://localhost:3000/app/billing/success"`
+	BillingCancelURL  string `env:"BILLING_CANCEL_URL" envDefault:"http://localhost:3000/app/billing/cancel"`
 }
 
 func Load() (*Config, error) {

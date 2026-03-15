@@ -30,3 +30,14 @@ const (
 	CreditTxDailyGrant   CreditTxType = "daily_grant"
 	CreditTxStripeTopup  CreditTxType = "stripe_topup"
 )
+
+type CreditTransaction struct {
+	ID                    string       `json:"id"`
+	UserID                string       `json:"-"`
+	Amount                int64        `json:"amount"`
+	Type                  CreditTxType `json:"type"`
+	JobID                 *string      `json:"job_id"`
+	StripePaymentIntentID *string      `json:"stripe_payment_intent_id"`
+	Description           *string      `json:"description"`
+	CreatedAt             time.Time    `json:"created_at"`
+}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/jackc/pgx/v5"
@@ -198,6 +200,76 @@ func (r *CreditRepo) UpdatePlan(ctx context.Context, userID string, plan domain.
 		return fmt.Errorf("update plan: %w", err)
 	}
 	return nil
+}
+
+func (r *CreditRepo) ListTransactions(ctx context.Context, userID string, cursor string, limit int) ([]domain.CreditTransaction, string, error) {
+	args := []any{userID, limit + 1}
+	var query string
+
+	if cursor == "" {
+		query = `
+			SELECT id, user_id, amount, type, job_id, stripe_payment_intent_id, description, created_at
+			FROM credit_transactions
+			WHERE user_id = $1
+			ORDER BY created_at DESC, id DESC
+			LIMIT $2`
+	} else {
+		// Cursor format: "created_at_rfc3339|id"
+		parts := strings.SplitN(cursor, "|", 2)
+		if len(parts) != 2 {
+			return nil, "", fmt.Errorf("invalid cursor format")
+		}
+		cursorTime, err := time.Parse(time.RFC3339Nano, parts[0])
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor timestamp: %w", err)
+		}
+		cursorID := parts[1]
+		args = append(args, cursorTime, cursorID)
+		query = `
+			SELECT id, user_id, amount, type, job_id, stripe_payment_intent_id, description, created_at
+			FROM credit_transactions
+			WHERE user_id = $1
+			  AND (created_at, id) < ($3, $4)
+			ORDER BY created_at DESC, id DESC
+			LIMIT $2`
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("list transactions: %w", err)
+	}
+	defer rows.Close()
+
+	txs := make([]domain.CreditTransaction, 0, limit+1)
+	for rows.Next() {
+		var tx domain.CreditTransaction
+		if err := rows.Scan(
+			&tx.ID,
+			&tx.UserID,
+			&tx.Amount,
+			&tx.Type,
+			&tx.JobID,
+			&tx.StripePaymentIntentID,
+			&tx.Description,
+			&tx.CreatedAt,
+		); err != nil {
+			return nil, "", fmt.Errorf("scan transaction: %w", err)
+		}
+		txs = append(txs, tx)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("iterate transactions: %w", err)
+	}
+
+	var nextCursor string
+	if len(txs) == limit+1 {
+		// Pop the sentinel row and build the cursor from the last real row.
+		txs = txs[:limit]
+		last := txs[limit-1]
+		nextCursor = last.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + last.ID
+	}
+
+	return txs, nextCursor, nil
 }
 
 // StripeCustomerRepo implements repository.StripeCustomerRepository.

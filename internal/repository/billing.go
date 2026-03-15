@@ -33,6 +33,10 @@ type CreditRepository interface {
 
 	// UpdatePlan upgrades or downgrades a user's plan.
 	UpdatePlan(ctx context.Context, userID string, plan domain.Plan) error
+
+	// ListTransactions returns credit transactions for the user with cursor-based pagination.
+	// Ordered by (created_at DESC, id DESC). cursor is opaque; pass "" for first page.
+	ListTransactions(ctx context.Context, userID string, cursor string, limit int) ([]domain.CreditTransaction, string, error)
 }
 
 // StripeCustomerRepository persists the user ↔ Stripe customer mapping.

@@ -70,8 +70,12 @@ func (c *Client) CreateCheckoutSession(customerID string, amountCents int64, des
 }
 
 // ConstructEvent parses and verifies a Stripe webhook payload.
+// We ignore API version mismatches because the Stripe dashboard may be on a
+// newer version than stripe-go supports; we only read stable metadata fields.
 func (c *Client) ConstructEvent(payload []byte, sigHeader string) (stripe.Event, error) {
-	event, err := webhook.ConstructEvent(payload, sigHeader, c.webhookSecret)
+	event, err := webhook.ConstructEventWithOptions(payload, sigHeader, c.webhookSecret, webhook.ConstructEventOptions{
+		IgnoreAPIVersionMismatch: true,
+	})
 	if err != nil {
 		return stripe.Event{}, fmt.Errorf("stripe construct event: %w", err)
 	}

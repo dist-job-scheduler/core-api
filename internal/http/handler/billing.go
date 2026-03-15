@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/usecase"
 	"github.com/gin-gonic/gin"
@@ -65,6 +66,27 @@ func (h *BillingHandler) CreateCheckoutSession(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"url": url})
+}
+
+// ListTransactions returns a paginated list of credit transactions for the authenticated user.
+// GET /billing/transactions?cursor=<opaque>&limit=<n>
+func (h *BillingHandler) ListTransactions(c *gin.Context) {
+	userID := c.GetString("userID")
+	cursor := c.Query("cursor")
+	limit := 50
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 {
+		limit = l
+	}
+	txs, nextCursor, err := h.uc.ListTransactions(c.Request.Context(), userID, cursor, limit)
+	if err != nil {
+		h.logger.ErrorContext(c.Request.Context(), "list transactions", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": txs,
+		"next_cursor":  nextCursor,
+	})
 }
 
 // HandleWebhook processes Stripe webhook events.
