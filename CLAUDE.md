@@ -107,7 +107,7 @@ Each worker gets a disjoint set of jobs. No duplicates, no coordination overhead
 | Database | PostgreSQL 16 via `pgx/v5` |
 | Migrations | goose (`-- +goose Up` annotations) |
 | Config | `caarlos0/env` — struct tags, no `.env` files in Go code |
-| Auth | Magic links → JWT HS256 (`golang-jwt/jwt/v5`); email via Resend (`resend-go/v2`) |
+| Auth | Clerk JWT RS256 via JWKS (`lestrrat-go/jwx/v2`) + API tokens (`fliq_sk_*`, SHA-256 hashed) |
 | Logging | `log/slog` + `lmittmann/tint` (local) + custom `ContextHandler` (`internal/log`) |
 | Linter | golangci-lint v2 (`errcheck`, `govet`+shadow, `staticcheck`, `unused`, `ineffassign`, `bodyclose`, `noctx`, `exhaustive`, `gocritic`) |
 
@@ -134,10 +134,8 @@ Required env vars (already in `.envrc` for local):
 | Var | Local default | Notes |
 |---|---|---|
 | `DATABASE_URL` | `postgres://scheduler:scheduler@localhost:5432/scheduler?sslmode=disable` | |
-| `JWT_SECRET` | set in `.envrc` | min 32 chars |
-| `MAGIC_LINK_BASE_URL` | `http://localhost:8080` | base for verify links in emails |
-| `RESEND_API_KEY` | not required locally | required in staging/production |
-| `RESEND_FROM` | not required locally | required in staging/production |
+| `JWT_SECRET` | set in `.envrc` | min 32 chars, HS256 fallback for local dev |
+| `CLERK_JWKS_URL` | set in `.envrc` | Clerk JWKS endpoint for RS256 JWT validation |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ### Seeding dev data
@@ -150,31 +148,9 @@ Creates `seed@test.local` and 20 jobs scheduled 1 minute from now — a mix of j
 
 ### Testing the auth flow locally
 
-In `ENV=local`, emails are never sent — the magic link is logged to stdout instead.
+Auth uses Clerk JWTs (RS256 via JWKS in production). For local dev without Clerk, set `JWT_SECRET` and use HS256 tokens.
 
-```bash
-# 1. Request a magic link — always returns 200
-curl -s -X POST http://localhost:8080/auth/magic-link \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@example.com"}'
-
-# 2. Copy the raw token from the server log line:
-#    msg="magic link email (local dev)" body="...<a href=\"http://localhost:8080/auth/verify?token=TOKEN\">..."
-
-# 3. Exchange the token for a JWT
-curl -s "http://localhost:8080/auth/verify?token=TOKEN"
-# → {"token":"eyJ..."}
-
-# 4. Call protected endpoints
-curl -s http://localhost:8080/jobs/SOME_ID \
-  -H "Authorization: Bearer eyJ..."
-```
-
-**Common gotchas:**
-- The magic-link token is single-use — replaying the same verify URL returns 401
-- The token expires after 15 minutes
-- The JWT lasts 24 hours; re-run steps 1–3 to get a fresh one
-- Pass the JWT (from `/auth/verify`), not the raw magic-link token, as the Bearer value
+API tokens (`fliq_sk_*`) can also be used as Bearer tokens — they are SHA-256 hashed and looked up in the DB.
 
 ### Resetting dev data
 
@@ -195,10 +171,8 @@ The Claude code-review workflow (`claude.yml`) requires `id-token: write`, `pull
 
 ## Design notes
 
-### Auth: magic links, no passwords
-No password storage, no password reset flow. A user POSTs their email, gets a single-use tokenised link (15 min TTL), exchanges it for a JWT (24 h). Google OAuth is deferred until there is a frontend redirect flow.
-
-The raw token is never stored — only its SHA-256 hash. `ClaimMagicToken` is a single atomic `UPDATE … WHERE used_at IS NULL AND expires_at > NOW() RETURNING …` — no separate SELECT, no TOCTOU window.
+### Auth: Clerk + API tokens
+No password storage. User sessions are authenticated via Clerk JWTs (RS256, validated against Clerk's JWKS endpoint). Programmatic access uses API tokens (`fliq_sk_*`) — the raw token is never stored, only its SHA-256 hash.
 
 ### Idempotency keys are scoped per user
 `UNIQUE(user_id, idempotency_key)` — different users can reuse the same key independently. The scheduler operates on jobs without user context (it only cares about `status` and `scheduled_at`), so `user_id` is not threaded through the scheduler layer.
