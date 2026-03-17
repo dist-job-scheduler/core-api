@@ -32,7 +32,7 @@ type Config struct {
 	StripeWebhookSecret string `env:"STRIPE_WEBHOOK_SECRET"`
 
 	// FreeCreditsPerDay is the number of credits granted daily to free-plan users.
-	FreeCreditsPerDay int `env:"FREE_CREDITS_PER_DAY" envDefault:"500000"`
+	FreeCreditsPerDay int `env:"FREE_CREDITS_PER_DAY" envDefault:"100000"`
 
 	// CreditsPerDollar controls the exchange rate (e.g. 100000 = 100k credits per $1).
 	// Minimum purchasable amount is always $0.50 (Stripe floor).
