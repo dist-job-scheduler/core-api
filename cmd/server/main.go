@@ -87,7 +87,7 @@ func main() {
 
 	srv := http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret)),
+		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins),
 	}
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)
