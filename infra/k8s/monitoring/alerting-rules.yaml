@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerting-rules
+  namespace: monitoring
+data:
+  alerts.yml: |
+    groups:
+      - name: infrastructure
+        rules:
+          # Postgres is unreachable from the app's readiness probe.
+          - alert: PostgresDown
+            expr: scheduler_health_check_up{dependency="postgres"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PostgreSQL is down"
+              description: "The {{ $labels.job }} readiness check reports Postgres unreachable for >1 min."
+
+          # A Prometheus scrape target has been unreachable for 2 minutes.
+          - alert: TargetDown
+            expr: up == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Scrape target {{ $labels.job }} is down"
+              description: "Prometheus cannot reach {{ $labels.instance }} for >2 min."
+
+      - name: api
+        rules:
+          # More than 5 % of HTTP responses are 5xx over the last 5 minutes.
+          - alert: HighAPIErrorRate
+            expr: |
+              (
+                sum(rate(scheduler_http_requests_total{status=~"5.."}[5m]))
+                /
+                sum(rate(scheduler_http_requests_total[5m]))
+              ) > 0.05
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "API 5xx error rate above 5 %"
+              description: "{{ $value | humanizePercentage }} of requests returned 5xx over the last 5 min."
+
+      - name: jobs
+        rules:
+          # More than 20 % of completed jobs are failing over the last 10 minutes.
+          - alert: HighJobFailureRate
+            expr: |
+              (
+                sum(rate(scheduler_jobs_completed_total{outcome="failed"}[10m]))
+                /
+                sum(rate(scheduler_jobs_completed_total[10m]))
+              ) > 0.2
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Job failure rate above 20 %"
+              description: "{{ $value | humanizePercentage }} of jobs ended in failure over the last 10 min."
+
+          # Reaper is rescuing more than 5 jobs/min — workers are likely crashing.
+          - alert: HighReaperRescueRate
+            expr: sum(rate(scheduler_reaper_rescued_total[5m])) * 60 > 5
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Reaper rescue rate is high"
+              description: "{{ $value | humanize }} jobs/min being rescued — possible worker crashes."
+
+          # P95 job pickup latency above 60 s — jobs are sitting in the queue too long.
+          - alert: HighJobPickupLatency
+            expr: histogram_quantile(0.95, sum(rate(scheduler_job_pickup_latency_seconds_bucket[10m])) by (le)) > 60
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Job pickup latency P95 above 60 s"
+              description: "P95 pickup latency is {{ $value | humanizeDuration }} — jobs are queuing."
