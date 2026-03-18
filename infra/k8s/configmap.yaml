@@ -11,3 +11,4 @@ data:
   MAGIC_LINK_BASE_URL: "https://job.enkiduck.com"
   METRICS_PORT: "9090"
   CORS_ALLOWED_ORIGINS: "https://fliq.enkiduck.com"
+  CLERK_JWKS_URL: "https://unique-quagga-17.clerk.accounts.dev/.well-known/jwks.json"
