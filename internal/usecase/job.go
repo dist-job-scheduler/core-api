@@ -53,6 +53,9 @@ func (u *JobUsecase) CreateJob(ctx context.Context, input CreateJobInput) (*doma
 	if input.Headers == nil {
 		input.Headers = make(map[string]string)
 	}
+	if input.WebhookHeaders == nil {
+		input.WebhookHeaders = make(map[string]string)
+	}
 
 	if input.TimeoutSeconds == 0 {
 		input.TimeoutSeconds = 30
