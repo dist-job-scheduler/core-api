@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/metrics"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/repository"
 )
 
 // WebhookPayload is the JSON body POSTed to the user's webhook endpoint.
@@ -26,12 +28,13 @@ type WebhookPayload struct {
 
 // WebhookNotifier delivers fire-and-forget webhook notifications for terminal job states.
 type WebhookNotifier struct {
-	client *http.Client
-	logger *slog.Logger
+	client         *http.Client
+	logger         *slog.Logger
+	signingSecrets repository.SigningSecretRepository
 }
 
 // NewWebhookNotifier creates a notifier with a dedicated HTTP client (10s timeout).
-func NewWebhookNotifier(logger *slog.Logger) *WebhookNotifier {
+func NewWebhookNotifier(logger *slog.Logger, signingSecrets repository.SigningSecretRepository) *WebhookNotifier {
 	return &WebhookNotifier{
 		client: &http.Client{
 			Timeout: 10 * time.Second,
@@ -39,7 +42,8 @@ func NewWebhookNotifier(logger *slog.Logger) *WebhookNotifier {
 				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			},
 		},
-		logger: logger.With("component", "webhook_notifier"),
+		logger:         logger.With("component", "webhook_notifier"),
+		signingSecrets: signingSecrets,
 	}
 }
 
@@ -83,6 +87,17 @@ func (n *WebhookNotifier) Notify(ctx context.Context, job *domain.Job, statusCod
 	// Apply user-defined webhook headers.
 	for k, v := range job.WebhookHeaders {
 		req.Header.Set(k, v)
+	}
+
+	// Sign the webhook request if the user has a signing secret.
+	secret, secretErr := n.signingSecrets.GetActive(ctx, job.UserID)
+	if secretErr != nil && !errors.Is(secretErr, domain.ErrSigningSecretNotFound) {
+		n.logger.WarnContext(ctx, "fetch signing secret for webhook failed, proceeding unsigned",
+			"job_id", job.ID, "error", secretErr)
+	} else if secretErr == nil {
+		ts, sig := signRequest(secret.Secret, http.MethodPost, *job.WebhookURL, body, time.Now())
+		req.Header.Set("X-Fliq-Timestamp", ts)
+		req.Header.Set("X-Fliq-Signature", sig)
 	}
 
 	resp, err := n.client.Do(req)

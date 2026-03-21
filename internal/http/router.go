@@ -11,7 +11,7 @@ import (
 	sloggin "github.com/samber/slog-gin"
 )
 
-func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string) *gin.Engine {
+func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -52,6 +52,11 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	billing.GET("/balance", billingHandler.GetBalance)
 	billing.POST("/checkout", billingHandler.CreateCheckoutSession)
 	billing.GET("/transactions", billingHandler.ListTransactions)
+
+	// Protected signing secret routes
+	signing := r.Group("/signing-secret", authMW, ensureUser)
+	signing.GET("", signingHandler.Get)
+	signing.POST("/rotate", signingHandler.Rotate)
 
 	// Webhook has no auth middleware — verified by Stripe signature
 	r.POST("/billing/webhook", billingHandler.HandleWebhook)

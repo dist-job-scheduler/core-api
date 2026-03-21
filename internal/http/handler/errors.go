@@ -17,4 +17,6 @@ const (
 	errTokenNotFound = "Token not found"
 
 	errInsufficientCredits = "Insufficient credits"
+
+	errSigningSecretNotFound = "No signing secret found to rotate"
 )

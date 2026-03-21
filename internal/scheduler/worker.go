@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -16,16 +17,17 @@ import (
 )
 
 type Worker struct {
-	id           string
-	repo         repository.JobRepository
-	attempts     repository.AttemptRepository
-	credits      repository.CreditRepository
-	executor     *Executor
-	notifier     *WebhookNotifier
-	logger       *slog.Logger
-	pollInterval time.Duration
-	concurrency  int
-	sem          chan struct{}
+	id             string
+	repo           repository.JobRepository
+	attempts       repository.AttemptRepository
+	credits        repository.CreditRepository
+	signingSecrets repository.SigningSecretRepository
+	executor       *Executor
+	notifier       *WebhookNotifier
+	logger         *slog.Logger
+	pollInterval   time.Duration
+	concurrency    int
+	sem            chan struct{}
 }
 
 func NewWorker(
@@ -36,20 +38,22 @@ func NewWorker(
 	logger *slog.Logger,
 	pollInterval time.Duration,
 	concurrency int,
+	signingSecrets repository.SigningSecretRepository,
 ) *Worker {
 	hostname, _ := os.Hostname()
 	id := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 	return &Worker{
-		id:           id,
-		repo:         repo,
-		attempts:     attempts,
-		credits:      credits,
-		executor:     NewExecutor(logger),
-		notifier:     notifier,
-		logger:       logger.With("worker_id", id),
-		pollInterval: pollInterval,
-		concurrency:  concurrency,
-		sem:          make(chan struct{}, concurrency),
+		id:             id,
+		repo:           repo,
+		attempts:       attempts,
+		credits:        credits,
+		signingSecrets: signingSecrets,
+		executor:       NewExecutor(logger),
+		notifier:       notifier,
+		logger:         logger.With("worker_id", id),
+		pollInterval:   pollInterval,
+		concurrency:    concurrency,
+		sem:            make(chan struct{}, concurrency),
 	}
 }
 
@@ -146,9 +150,18 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 	defer cancelHeartbeat()
 	go w.heartbeat(heartbeatCtx, job.ID)
 
+	var signingSecret string
+	secret, err := w.signingSecrets.GetActive(ctx, job.UserID)
+	if err != nil && !errors.Is(err, domain.ErrSigningSecretNotFound) {
+		w.logger.WarnContext(ctx, "fetch signing secret failed, proceeding unsigned",
+			"job_id", job.ID, "user_id", job.UserID, "error", err)
+	} else if err == nil {
+		signingSecret = secret.Secret
+	}
+
 	w.logger.InfoContext(ctx, "executing job", "job_id", job.ID, "method", job.Method, "url", job.URL)
 
-	result := w.executor.Run(ctx, job)
+	result := w.executor.Run(ctx, job, signingSecret)
 	durationMS := time.Since(startedAt).Milliseconds()
 
 	// Deduct 1 credit for this execution attempt, regardless of outcome.

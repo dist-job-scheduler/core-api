@@ -54,7 +54,7 @@ type ExecutionResult struct {
 	Duration   time.Duration
 }
 
-func (e *Executor) Run(ctx context.Context, job *domain.Job) ExecutionResult {
+func (e *Executor) Run(ctx context.Context, job *domain.Job, signingSecret string) ExecutionResult {
 	start := time.Now()
 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(job.TimeoutSeconds)*time.Second)
@@ -72,6 +72,16 @@ func (e *Executor) Run(ctx context.Context, job *domain.Job) ExecutionResult {
 
 	for k, v := range job.Headers {
 		req.Header.Set(k, v)
+	}
+
+	if signingSecret != "" {
+		var bodyBytes []byte
+		if job.Body != nil {
+			bodyBytes = []byte(*job.Body)
+		}
+		ts, sig := signRequest(signingSecret, job.Method, job.URL, bodyBytes, time.Now())
+		req.Header.Set("X-Fliq-Timestamp", ts)
+		req.Header.Set("X-Fliq-Signature", sig)
 	}
 
 	reqID := requestid.New()
