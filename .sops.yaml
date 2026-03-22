@@ -1,7 +1,0 @@
-creation_rules:
-  - path_regex: infra/k8s/secrets\.yaml$
-    encrypted_regex: "^stringData$"
-    age: age1rt320uvjzf8jrx7xwy97gqh69jykx6650my54m4uycfs7vx37arqkpgrfu
-  - path_regex: infra/k8s/monitoring/secrets\.yaml$
-    encrypted_regex: "^stringData$"
-    age: age1rt320uvjzf8jrx7xwy97gqh69jykx6650my54m4uycfs7vx37arqkpgrfu
