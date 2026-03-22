@@ -102,7 +102,7 @@ Each worker gets a disjoint set of jobs. No duplicates, no coordination overhead
 
 | Concern | Choice |
 |---|---|
-| Language | Go 1.25 |
+| Language | Go 1.26 |
 | Web framework | Gin |
 | Database | PostgreSQL 16 via `pgx/v5` |
 | Migrations | goose (`-- +goose Up` annotations) |
@@ -161,11 +161,17 @@ goose -dir ./migrations postgres "$DATABASE_URL" reset
 goose -dir ./migrations postgres "$DATABASE_URL" up
 ```
 
+## Infrastructure
+
+K8s manifests, Terraform, monitoring config, and SOPS-encrypted secrets live in the **private** repo `dist-job-scheduler/infra`. The deploy workflow in this repo checks out the infra repo at deploy time via `INFRA_REPO_TOKEN`.
+
 ## CI
 
 Two parallel jobs on every push/PR to `main`:
 - **lint** — `golangci-lint run ./...`
 - **build-test** — builds both binaries, runs goose migrations against a real `postgres:17` container, then `go test -race -count=1 ./...`
+
+On push to `main`, the **Deploy** workflow builds + pushes Docker images, then checks out `dist-job-scheduler/infra` and applies k8s manifests.
 
 The Claude code-review workflow (`claude.yml`) requires `id-token: write`, `pull-requests: write`, and `contents: read` permissions — these must be set at the job level, not just the workflow level.
 
