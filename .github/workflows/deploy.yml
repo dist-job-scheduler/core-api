@@ -56,6 +56,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Checkout infra repo
+        uses: actions/checkout@v5
+        with:
+          repository: dist-job-scheduler/infra
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          path: infra
+
       - name: Set up kubectl
         run: |
           mkdir -p ~/.kube
@@ -85,6 +92,8 @@ jobs:
           kubectl apply -f infra/k8s/monitoring/promtail.yaml
           kubectl apply -f infra/k8s/monitoring/grafana.yaml
           kubectl apply -f infra/k8s/monitoring/ingress.yaml
+          kubectl apply -f infra/k8s/monitoring/alerting-rules.yaml
+          kubectl apply -f infra/k8s/monitoring/alertmanager.yaml
 
       - name: Apply manifests
         run: |
@@ -117,7 +126,6 @@ jobs:
 
       - name: Post-deploy smoke test
         run: |
-          # Get the server pod and check readiness
           kubectl wait --for=condition=Ready pods -l app=server -n dist-scheduler --timeout=60s
           kubectl wait --for=condition=Ready pods -l app=scheduler -n dist-scheduler --timeout=60s
           echo "All pods ready"
