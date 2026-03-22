@@ -27,6 +27,7 @@ linters:
         linters:
           - errcheck
           - gocritic
+          - noctx
 
 issues:
   max-same-issues: 0   # show all issues, not just 3 per linter
