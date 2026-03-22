@@ -1,10 +1,15 @@
 package scheduler
 
 import (
+	"context"
+	"log/slog"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/testutil"
 )
 
 func TestRetryDelay_Exponential_FirstRetry(t *testing.T) {
@@ -59,4 +64,101 @@ func TestRetryDelay_DefaultFallback(t *testing.T) {
 	if got != want {
 		t.Errorf("retryDelay(unknown, 5) = %v, want %v", got, want)
 	}
+}
+
+func TestWorker_Start_PollsOnInterval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var claimCount atomic.Int32
+
+		repo := &testutil.MockJobRepository{
+			ClaimFn: func(ctx context.Context, workerID string, limit int) ([]*domain.Job, error) {
+				claimCount.Add(1)
+				return nil, nil
+			},
+		}
+
+		w := &Worker{
+			id:             "test-worker",
+			repo:           repo,
+			attempts:       &testutil.MockAttemptRepository{},
+			credits:        &testutil.MockCreditRepository{},
+			signingSecrets: &testutil.MockSigningSecretRepository{},
+			executor:       NewExecutor(slog.Default()),
+			notifier:       NewWebhookNotifier(slog.Default(), &testutil.MockSigningSecretRepository{}),
+			logger:         slog.Default(),
+			pollInterval:   5 * time.Second,
+			concurrency:    10,
+			sem:            make(chan struct{}, 10),
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		go w.Start(ctx)
+
+		// First tick at 5s.
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+
+		if got := claimCount.Load(); got != 1 {
+			t.Fatalf("after 5s: claim count = %d, want 1", got)
+		}
+
+		// Second tick at 10s.
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+
+		if got := claimCount.Load(); got != 2 {
+			t.Fatalf("after 10s: claim count = %d, want 2", got)
+		}
+
+		cancel()
+		synctest.Wait()
+	})
+}
+
+func TestWorker_Heartbeat_FiresEvery10s(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var heartbeatCount atomic.Int32
+
+		repo := &testutil.MockJobRepository{
+			UpdateHeartbeatFn: func(ctx context.Context, jobID string) error {
+				heartbeatCount.Add(1)
+				return nil
+			},
+		}
+
+		w := &Worker{
+			repo:   repo,
+			logger: slog.Default(),
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		go w.heartbeat(ctx, "job-123")
+
+		// First heartbeat at 10s.
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if got := heartbeatCount.Load(); got != 1 {
+			t.Fatalf("after 10s: heartbeat count = %d, want 1", got)
+		}
+
+		// Second heartbeat at 20s.
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+
+		if got := heartbeatCount.Load(); got != 2 {
+			t.Fatalf("after 20s: heartbeat count = %d, want 2", got)
+		}
+
+		// 5s more (25s total) — should still be 2, ticker hasn't fired.
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+
+		if got := heartbeatCount.Load(); got != 2 {
+			t.Fatalf("after 25s: heartbeat count = %d, want 2 (ticker not due)", got)
+		}
+
+		cancel()
+		synctest.Wait()
+	})
 }
