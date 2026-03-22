@@ -66,11 +66,23 @@ func TestBillingRepo_HasCredits(t *testing.T) {
 }
 
 func TestBillingRepo_Deduct(t *testing.T) {
-	repo, userID := setupBillingRepo(t)
+	pool := testutil.SetupTestDB(t)
+	testutil.TruncateAll(t, pool)
+	userID := testutil.UserID()
+	testutil.SeedUser(t, pool, userID)
+	repo := postgres.NewCreditRepository(pool)
+	jobRepo := postgres.NewJobRepository(pool)
 	ctx := context.Background()
 
+	// Create a real job so FK constraint is satisfied
+	job := testutil.NewJob(testutil.WithUserID(userID))
+	created, err := jobRepo.Create(ctx, job)
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
 	balanceBefore, _ := repo.GetBalance(ctx, userID)
-	if err := repo.Deduct(ctx, userID, "job-123"); err != nil {
+	if err := repo.Deduct(ctx, userID, created.ID); err != nil {
 		t.Fatalf("deduct: %v", err)
 	}
 	balanceAfter, _ := repo.GetBalance(ctx, userID)
@@ -122,12 +134,22 @@ func TestBillingRepo_UpdatePlan(t *testing.T) {
 }
 
 func TestBillingRepo_ListTransactions_Pagination(t *testing.T) {
-	repo, userID := setupBillingRepo(t)
+	pool := testutil.SetupTestDB(t)
+	testutil.TruncateAll(t, pool)
+	userID := testutil.UserID()
+	testutil.SeedUser(t, pool, userID)
+	repo := postgres.NewCreditRepository(pool)
+	jobRepo := postgres.NewJobRepository(pool)
 	ctx := context.Background()
 
-	// Create 5 deductions
+	// Create 5 jobs and deduct for each
 	for i := 0; i < 5; i++ {
-		if err := repo.Deduct(ctx, userID, "job-"+string(rune('a'+i))); err != nil {
+		job := testutil.NewJob(testutil.WithUserID(userID))
+		created, err := jobRepo.Create(ctx, job)
+		if err != nil {
+			t.Fatalf("create job %d: %v", i, err)
+		}
+		if err := repo.Deduct(ctx, userID, created.ID); err != nil {
 			t.Fatalf("deduct %d: %v", i, err)
 		}
 	}
