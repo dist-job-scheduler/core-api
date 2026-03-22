@@ -47,21 +47,28 @@ func TruncateAll(t *testing.T, pool *pgxpool.Pool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	tables := []string{
-		"credit_transactions",
-		"job_attempts",
-		"jobs",
-		"schedules",
-		"signing_secrets",
-		"api_tokens",
-		"user_credits",
-		"stripe_customers",
-		"users",
-	}
-	for _, table := range tables {
-		if _, err := pool.Exec(ctx, "TRUNCATE "+table+" CASCADE"); err != nil {
-			t.Fatalf("truncate %s: %v", table, err)
-		}
+	// Use a single statement so missing tables don't cause failures.
+	// TRUNCATE ... CASCADE handles FK ordering automatically.
+	_, err := pool.Exec(ctx, `
+		DO $$
+		DECLARE
+			tbl text;
+		BEGIN
+			FOR tbl IN
+				SELECT tablename FROM pg_tables
+				WHERE schemaname = 'public'
+				  AND tablename IN (
+					'credit_transactions','job_attempts','jobs','schedules',
+					'signing_secrets','api_tokens','user_credits',
+					'stripe_customers','users','magic_tokens'
+				  )
+			LOOP
+				EXECUTE format('TRUNCATE %I CASCADE', tbl);
+			END LOOP;
+		END $$;
+	`)
+	if err != nil {
+		t.Fatalf("truncate tables: %v", err)
 	}
 }
 
