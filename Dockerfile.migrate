@@ -3,7 +3,7 @@
 # Runs goose migrations — use as a one-off job before deploying server/scheduler.
 # Cloud Run Jobs, K8s init containers, or Fly.io release commands are all good fits.
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN go install github.com/pressly/goose/v3/cmd/goose@latest
 
