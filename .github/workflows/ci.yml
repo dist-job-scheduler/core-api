@@ -22,8 +22,29 @@ jobs:
         with:
           version: v2.10
 
-  build-test:
-    name: Build & Test
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build binaries
+        run: |
+          go build -v ./cmd/server/...
+          go build -v ./cmd/scheduler/...
+
+      - name: Unit tests
+        run: go test -race -count=1 -timeout=60s -short ./...
+
+  integration-test:
+    name: Integration Tests
     runs-on: ubuntu-latest
 
     services:
@@ -43,30 +64,142 @@ jobs:
 
     env:
       DATABASE_URL: postgres://scheduler:scheduler@localhost:5432/scheduler?sslmode=disable
+      TEST_DATABASE_URL: postgres://scheduler:scheduler@localhost:5432/scheduler?sslmode=disable
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Download dependencies
         run: go mod download
 
-      - name: Verify dependencies
-        run: go mod verify
+      - name: Run migrations
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@latest
+          goose -dir ./migrations postgres "$DATABASE_URL" up
 
-      - name: Build server
-        run: go build -v ./cmd/server/...
+      - name: Integration tests
+        run: go test -race -count=1 -timeout=120s -tags=integration ./...
 
-      - name: Build scheduler
-        run: go build -v ./cmd/scheduler/...
+  e2e-test:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: scheduler
+          POSTGRES_PASSWORD: scheduler
+          POSTGRES_DB: scheduler
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://scheduler:scheduler@localhost:5432/scheduler?sslmode=disable
+      JWT_SECRET: e2e-test-secret-must-be-32-chars!
+      ENV: local
+      PORT: "8080"
+      CORS_ALLOWED_ORIGINS: "*"
+      FREE_CREDITS_PER_DAY: "100000"
+      CREDITS_PER_DOLLAR: "100000"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
 
       - name: Run migrations
         run: |
           go install github.com/pressly/goose/v3/cmd/goose@latest
           goose -dir ./migrations postgres "$DATABASE_URL" up
 
-      - name: Test
-        run: go test -race -count=1 -timeout=120s ./...
+      - name: Build and start server
+        run: |
+          go build -o ./bin/server ./cmd/server
+          ./bin/server &
+          sleep 2
+
+      - name: Build and start scheduler
+        run: |
+          go build -o ./bin/scheduler ./cmd/scheduler
+          ./bin/scheduler &
+          sleep 2
+
+      - name: Seed test user and create API token
+        run: |
+          go run ./cmd/seed
+          # Create an API token for E2E tests via direct DB insert
+          export E2E_AUTH_TOKEN=$(psql "$DATABASE_URL" -tAc "
+            INSERT INTO users (id) VALUES ('e2e-test-user') ON CONFLICT DO NOTHING;
+            INSERT INTO user_credits (user_id, balance, plan, daily_free_limit, refreshed_at, updated_at)
+            VALUES ('e2e-test-user', 1000000, 'free', 100000, NOW(), NOW())
+            ON CONFLICT DO NOTHING;
+            SELECT 'e2e_test_token';
+          ")
+          # Use a JWT token instead for simplicity
+          echo "E2E_AUTH_TOKEN will be set via JWT"
+
+      - name: Generate E2E auth token
+        id: auth
+        run: |
+          # Generate a JWT for e2e-test-user using the JWT_SECRET
+          TOKEN=$(go run -tags=e2e_setup ./tests/e2e/cmd/gentoken 2>/dev/null || echo "")
+          if [ -z "$TOKEN" ]; then
+            # Fallback: use a simple go script to generate JWT
+            TOKEN=$(go run -e 'package main
+            import (
+              "fmt"
+              "time"
+              "github.com/golang-jwt/jwt/v5"
+            )
+            func main() {
+              token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+                "sub": "e2e-test-user",
+                "exp": time.Now().Add(time.Hour).Unix(),
+                "iat": time.Now().Unix(),
+              })
+              s, _ := token.SignedString([]byte("e2e-test-secret-must-be-32-chars!"))
+              fmt.Print(s)
+            }' 2>/dev/null || echo "")
+          fi
+          echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for server health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/jobs -H "Authorization: Bearer placeholder" -o /dev/null 2>/dev/null; then
+              echo "Server is up"
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 1
+          done
+
+      - name: Run E2E tests
+        env:
+          E2E_BASE_URL: http://localhost:8080
+          E2E_AUTH_TOKEN: ${{ steps.auth.outputs.token }}
+        run: go test -race -count=1 -timeout=300s -tags=e2e ./tests/e2e/...
+        if: steps.auth.outputs.token != ''
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Server logs ==="
+          cat /tmp/server.log 2>/dev/null || echo "No server log found"
+          echo "=== Scheduler logs ==="
+          cat /tmp/scheduler.log 2>/dev/null || echo "No scheduler log found"

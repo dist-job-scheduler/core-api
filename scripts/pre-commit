@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "==> Linting..."
+golangci-lint run ./...
+
+echo "==> Unit tests..."
+go test -race -count=1 -timeout=60s -short ./...
+
+echo "==> All checks passed."

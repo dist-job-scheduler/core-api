@@ -10,6 +10,7 @@ env:
 jobs:
   build-and-push:
     name: Build & Push Images
+    needs: []  # Deploy only runs on main push, CI runs separately
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -113,3 +114,10 @@ jobs:
         run: |
           kubectl rollout status deployment/server -n dist-scheduler --timeout=120s
           kubectl rollout status deployment/scheduler -n dist-scheduler --timeout=120s
+
+      - name: Post-deploy smoke test
+        run: |
+          # Get the server pod and check readiness
+          kubectl wait --for=condition=Ready pods -l app=server -n dist-scheduler --timeout=60s
+          kubectl wait --for=condition=Ready pods -l app=scheduler -n dist-scheduler --timeout=60s
+          echo "All pods ready"
