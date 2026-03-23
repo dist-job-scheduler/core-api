@@ -54,14 +54,14 @@ func (h *BillingHandler) CreateCheckoutSession(c *gin.Context) {
 		Credits int64 `json:"credits" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": formatValidationError(err)})
 		return
 	}
 
 	url, err := h.uc.CreateCheckoutSession(c.Request.Context(), userID, req.Credits)
 	if err != nil {
 		h.logger.ErrorContext(c.Request.Context(), "create checkout session", "error", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
 		return
 	}
 

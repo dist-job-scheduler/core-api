@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
@@ -103,7 +102,11 @@ func (h *JobHandler) Cancel(ctx *gin.Context) {
 }
 
 func (h *JobHandler) List(ctx *gin.Context) {
-	limit, _ := strconv.Atoi(ctx.Query("limit"))
+	limit, err := parseLimit(ctx.Query("limit"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": errInvalidLimit})
+		return
+	}
 
 	result, err := h.jobUsecase.ListJobs(ctx.Request.Context(), usecase.ListJobsInput{
 		UserID: ctx.GetString("userID"),
@@ -145,7 +148,7 @@ func (h *JobHandler) List(ctx *gin.Context) {
 func (h *JobHandler) Create(ctx *gin.Context) {
 	var req createJobRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": formatValidationError(err)})
 		return
 	}
 

@@ -18,6 +18,7 @@ import (
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/metrics"
 	httptransport "github.com/ErlanBelekov/dist-job-scheduler/internal/http"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/http/handler"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/http/middleware"
 	stripeclient "github.com/ErlanBelekov/dist-job-scheduler/internal/stripe"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/usecase"
 	"github.com/gin-gonic/gin"
@@ -89,9 +90,12 @@ func main() {
 	metrics.Register()
 	checker := health.NewChecker(pool, logger, prometheus.DefaultRegisterer)
 
+	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
+	defer rateLimiter.Stop()
+
 	srv := http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins),
+		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins, rateLimiter),
 	}
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)

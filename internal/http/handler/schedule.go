@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
@@ -72,7 +71,7 @@ func toScheduleResponse(s *domain.Schedule) scheduleResponse {
 func (h *ScheduleHandler) Create(ctx *gin.Context) {
 	var req createScheduleRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": formatValidationError(err)})
 		return
 	}
 
@@ -112,7 +111,11 @@ func (h *ScheduleHandler) Create(ctx *gin.Context) {
 }
 
 func (h *ScheduleHandler) List(ctx *gin.Context) {
-	limit, _ := strconv.Atoi(ctx.Query("limit"))
+	limit, err := parseLimit(ctx.Query("limit"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": errInvalidLimit})
+		return
+	}
 
 	result, err := h.uc.ListSchedules(ctx.Request.Context(), usecase.ListSchedulesInput{
 		UserID: ctx.GetString("userID"),
@@ -211,7 +214,11 @@ func (h *ScheduleHandler) Delete(ctx *gin.Context) {
 
 func (h *ScheduleHandler) ListJobs(ctx *gin.Context) {
 	id := ctx.Param("id")
-	limit, _ := strconv.Atoi(ctx.Query("limit"))
+	limit, err := parseLimit(ctx.Query("limit"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": errInvalidLimit})
+		return
+	}
 
 	result, err := h.uc.ListScheduleJobs(ctx.Request.Context(), usecase.ListScheduleJobsInput{
 		ScheduleID: id,

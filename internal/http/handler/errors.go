@@ -19,4 +19,6 @@ const (
 	errInsufficientCredits = "Insufficient credits"
 
 	errSigningSecretNotFound = "No signing secret found to rotate"
+
+	errInvalidLimit = "limit must be between 1 and 100"
 )
