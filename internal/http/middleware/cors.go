@@ -8,7 +8,7 @@ import (
 )
 
 // CORS returns middleware that handles Cross-Origin Resource Sharing.
-// allowedOrigins is a comma-separated list (e.g. "https://fliq.enkiduck.com,http://localhost:3000").
+// allowedOrigins is a comma-separated list (e.g. "https://fliq.sh,http://localhost:3000").
 // If empty, no CORS headers are set (same-origin only).
 func CORS(allowedOrigins string) gin.HandlerFunc {
 	origins := make(map[string]struct{})
