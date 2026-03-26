@@ -39,7 +39,7 @@ type Config struct {
 	CreditsPerDollar int `env:"CREDITS_PER_DOLLAR" envDefault:"100000"`
 
 	// CORS — comma-separated list of allowed origins (e.g. "https://fliq.sh,http://localhost:3000").
-	CORSAllowedOrigins string `env:"CORS_ALLOWED_ORIGINS" envDefault:""`
+	CORSAllowedOrigins string `env:"CORS_ALLOWED_ORIGINS" envDefault:"https://fliq.sh,http://localhost:3000"`
 
 	// Billing URLs for Stripe Checkout redirect.
 	BillingSuccessURL string `env:"BILLING_SUCCESS_URL" envDefault:"http://localhost:3000/app/billing/success"`
