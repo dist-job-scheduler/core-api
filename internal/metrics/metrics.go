@@ -97,6 +97,40 @@ var (
 		Buckets:   []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10},
 	})
 
+	// Buffer drainer metrics
+
+	BufferItemsInFlight = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "scheduler",
+		Name:      "buffer_items_in_flight",
+		Help:      "Number of buffer items currently being executed by the drainer.",
+	})
+
+	BufferItemsCompletedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "scheduler",
+		Name:      "buffer_items_completed_total",
+		Help:      "Total buffer items finished, by outcome.",
+	}, []string{"outcome"})
+
+	BufferDrainerCycleDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "scheduler",
+		Name:      "buffer_drainer_cycle_duration_seconds",
+		Help:      "Time taken for one drainer cycle.",
+		Buckets:   prometheus.DefBuckets,
+	})
+
+	BufferReaperRescuedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "scheduler",
+		Name:      "buffer_reaper_rescued_total",
+		Help:      "Total stale buffer items handled by the buffer reaper.",
+	}, []string{"action"})
+
+	BufferReaperCycleDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "scheduler",
+		Name:      "buffer_reaper_cycle_duration_seconds",
+		Help:      "Time taken for one buffer reaper cycle.",
+		Buckets:   prometheus.DefBuckets,
+	})
+
 	// Rate limiting
 
 	RateLimitExceededTotal = prometheus.NewCounter(prometheus.CounterOpts{
@@ -120,6 +154,11 @@ func Register() {
 		HTTPRequestsTotal,
 		WebhookDeliveriesTotal,
 		WebhookDuration,
+		BufferItemsInFlight,
+		BufferItemsCompletedTotal,
+		BufferDrainerCycleDuration,
+		BufferReaperRescuedTotal,
+		BufferReaperCycleDuration,
 		RateLimitExceededTotal,
 	)
 }

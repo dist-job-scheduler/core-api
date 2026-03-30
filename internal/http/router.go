@@ -11,7 +11,7 @@ import (
 	sloggin "github.com/samber/slog-gin"
 )
 
-func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string, rateLimiter *middleware.RateLimiter) *gin.Engine {
+func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, bufferHandler *handler.BufferHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string, rateLimiter *middleware.RateLimiter) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -40,6 +40,18 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	schedules.POST("/:id/resume", scheduleHandler.Resume)
 	schedules.DELETE("/:id", scheduleHandler.Delete)
 	schedules.GET("/:id/jobs", scheduleHandler.ListJobs)
+
+	// Protected buffer routes
+	buffers := r.Group("/buffers", authMW, ensureUser, rateLimiter.Middleware())
+	buffers.POST("", bufferHandler.Create)
+	buffers.GET("", bufferHandler.List)
+	buffers.GET("/:id", bufferHandler.GetByID)
+	buffers.POST("/:id/pause", bufferHandler.Pause)
+	buffers.POST("/:id/resume", bufferHandler.Resume)
+	buffers.DELETE("/:id", bufferHandler.Delete)
+	buffers.POST("/:id/items", bufferHandler.PushItem)
+	buffers.GET("/:id/items", bufferHandler.ListItems)
+	buffers.GET("/:id/items/:itemId", bufferHandler.GetItem)
 
 	// Protected token routes
 	tokens := r.Group("/tokens", authMW, ensureUser, rateLimiter.Middleware())

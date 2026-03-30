@@ -87,6 +87,11 @@ func main() {
 	signingRepo := postgres.NewSigningSecretRepository(pool)
 	signingHandler := handler.NewSigningHandler(signingRepo, logger)
 
+	// Buffers
+	bufferRepo := postgres.NewBufferRepository(pool)
+	bufferUsecase := usecase.NewBufferUsecase(bufferRepo, creditRepo)
+	bufferHandler := handler.NewBufferHandler(bufferUsecase, logger)
+
 	metrics.Register()
 	checker := health.NewChecker(pool, logger, prometheus.DefaultRegisterer)
 
@@ -95,7 +100,7 @@ func main() {
 
 	srv := http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins, rateLimiter),
+		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, bufferHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins, rateLimiter),
 	}
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)
