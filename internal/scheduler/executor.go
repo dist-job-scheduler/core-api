@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/requestid"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/safedialer"
 )
 
 type Executor struct {
@@ -20,23 +20,34 @@ type Executor struct {
 	logger *slog.Logger
 }
 
+// defaultTransport returns an http.Transport with SSRF-safe dialer.
+func defaultTransport() *http.Transport {
+	return &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext:         safedialer.NewSafeDialContext(10*time.Second, 30*time.Second),
+	}
+}
+
 func NewExecutor(logger *slog.Logger) *Executor {
+	return newExecutor(logger, defaultTransport())
+}
+
+// NewExecutorWithTransport creates an Executor with a custom transport (for testing).
+func NewExecutorWithTransport(logger *slog.Logger, transport http.RoundTripper) *Executor {
+	return newExecutor(logger, transport)
+}
+
+func newExecutor(logger *slog.Logger, transport http.RoundTripper) *Executor {
 	return &Executor{
 		client: &http.Client{
 			// Per-job timeouts are set via context; this is a safety net.
-			Timeout: 5 * time.Minute,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					MinVersion: tls.VersionTLS12,
-				},
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-			},
+			Timeout:   5 * time.Minute,
+			Transport: transport,
 			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 				if len(via) >= 10 {
 					return fmt.Errorf("stopped after 10 redirects")

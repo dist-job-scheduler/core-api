@@ -96,6 +96,14 @@ var (
 		Help:      "Duration of webhook HTTP calls.",
 		Buckets:   []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10},
 	})
+
+	// Rate limiting
+
+	RateLimitExceededTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "scheduler",
+		Name:      "rate_limit_exceeded_total",
+		Help:      "Total requests rejected by rate limiting.",
+	})
 )
 
 func Register() {
@@ -112,6 +120,7 @@ func Register() {
 		HTTPRequestsTotal,
 		WebhookDeliveriesTotal,
 		WebhookDuration,
+		RateLimitExceededTotal,
 	)
 }
 

@@ -11,7 +11,7 @@ import (
 	sloggin "github.com/samber/slog-gin"
 )
 
-func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string) *gin.Engine {
+func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string, rateLimiter *middleware.RateLimiter) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -24,7 +24,7 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	ensureUser := middleware.EnsureUser(userRepo, creditRepo, logger)
 
 	// Protected job routes
-	jobs := r.Group("/jobs", authMW, ensureUser)
+	jobs := r.Group("/jobs", authMW, ensureUser, rateLimiter.Middleware())
 	jobs.GET("", jobHandler.List)
 	jobs.POST("", jobHandler.Create)
 	jobs.GET("/:id", jobHandler.GetByID)
@@ -32,7 +32,7 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	jobs.GET("/:id/attempts", jobHandler.ListAttempts)
 
 	// Protected schedule routes
-	schedules := r.Group("/schedules", authMW, ensureUser)
+	schedules := r.Group("/schedules", authMW, ensureUser, rateLimiter.Middleware())
 	schedules.POST("", scheduleHandler.Create)
 	schedules.GET("", scheduleHandler.List)
 	schedules.GET("/:id", scheduleHandler.GetByID)
@@ -42,19 +42,19 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	schedules.GET("/:id/jobs", scheduleHandler.ListJobs)
 
 	// Protected token routes
-	tokens := r.Group("/tokens", authMW, ensureUser)
+	tokens := r.Group("/tokens", authMW, ensureUser, rateLimiter.Middleware())
 	tokens.POST("", tokenHandler.Create)
 	tokens.GET("", tokenHandler.List)
 	tokens.DELETE("/:id", tokenHandler.Delete)
 
 	// Protected billing routes
-	billing := r.Group("/billing", authMW, ensureUser)
+	billing := r.Group("/billing", authMW, ensureUser, rateLimiter.Middleware())
 	billing.GET("/balance", billingHandler.GetBalance)
 	billing.POST("/checkout", billingHandler.CreateCheckoutSession)
 	billing.GET("/transactions", billingHandler.ListTransactions)
 
 	// Protected signing secret routes
-	signing := r.Group("/signing-secret", authMW, ensureUser)
+	signing := r.Group("/signing-secret", authMW, ensureUser, rateLimiter.Middleware())
 	signing.GET("", signingHandler.Get)
 	signing.POST("/rotate", signingHandler.Rotate)
 

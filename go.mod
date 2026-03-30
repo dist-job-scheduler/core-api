@@ -15,6 +15,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/slog-gin v1.21.0
 	github.com/stripe/stripe-go/v82 v82.5.1
+	golang.org/x/time v0.15.0
 )
 
 require (

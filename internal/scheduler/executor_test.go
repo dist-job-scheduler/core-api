@@ -2,6 +2,7 @@ package scheduler_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +10,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/safedialer"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/scheduler"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/testutil"
 )
+
+// testExecutor creates an executor with the default (non-safe) transport so
+// httptest servers on 127.0.0.1 are reachable.
+func testExecutor() *scheduler.Executor {
+	return scheduler.NewExecutorWithTransport(slog.Default(), http.DefaultTransport)
+}
 
 func TestExecutor_Run_Success_200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +27,7 @@ func TestExecutor_Run_Success_200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	exec := scheduler.NewExecutor(slog.Default())
+	exec := testExecutor()
 	job := testutil.NewJob(testutil.WithURL(srv.URL), testutil.WithMethod("GET"))
 
 	result := exec.Run(context.Background(), job, "")
@@ -41,7 +49,7 @@ func TestExecutor_Run_NonOK_Status(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	exec := scheduler.NewExecutor(slog.Default())
+	exec := testExecutor()
 	job := testutil.NewJob(testutil.WithURL(srv.URL), testutil.WithMethod("GET"))
 
 	result := exec.Run(context.Background(), job, "")
@@ -61,7 +69,7 @@ func TestExecutor_Run_Timeout(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	exec := scheduler.NewExecutor(slog.Default())
+	exec := testExecutor()
 	job := testutil.NewJob(testutil.WithURL(srv.URL), testutil.WithMethod("GET"))
 	job.TimeoutSeconds = 1
 
@@ -85,7 +93,7 @@ func TestExecutor_Run_CustomHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	exec := scheduler.NewExecutor(slog.Default())
+	exec := testExecutor()
 	job := testutil.NewJob(testutil.WithURL(srv.URL), testutil.WithMethod("POST"))
 	job.Headers = map[string]string{
 		"Content-Type":    "application/xml",
@@ -114,7 +122,7 @@ func TestExecutor_Run_SetsRequestID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	exec := scheduler.NewExecutor(slog.Default())
+	exec := testExecutor()
 	job := testutil.NewJob(testutil.WithURL(srv.URL), testutil.WithMethod("GET"))
 
 	result := exec.Run(context.Background(), job, "")
@@ -128,5 +136,20 @@ func TestExecutor_Run_SetsRequestID(t *testing.T) {
 	// UUID v4 is 36 characters: 8-4-4-4-12
 	if len(gotRequestID) != 36 {
 		t.Errorf("X-Request-ID length = %d, want 36 (UUID format)", len(gotRequestID))
+	}
+}
+
+func TestExecutor_Run_BlocksSSRF(t *testing.T) {
+	// Use the production executor (with safe dialer) to verify SSRF blocking.
+	exec := scheduler.NewExecutor(slog.Default())
+	job := testutil.NewJob(testutil.WithURL("http://127.0.0.1:9999/secret"), testutil.WithMethod("GET"))
+
+	result := exec.Run(context.Background(), job, "")
+
+	if result.Err == nil {
+		t.Fatal("Run() error = nil, want SSRF blocked error")
+	}
+	if !errors.Is(result.Err, safedialer.ErrBlockedAddress) && !strings.Contains(result.Err.Error(), "blocked network range") {
+		t.Errorf("Run() error = %v, want to contain blocked address error", result.Err)
 	}
 }

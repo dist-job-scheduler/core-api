@@ -14,6 +14,7 @@ import (
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/metrics"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/repository"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/safedialer"
 )
 
 // WebhookPayload is the JSON body POSTed to the user's webhook endpoint.
@@ -40,6 +41,7 @@ func NewWebhookNotifier(logger *slog.Logger, signingSecrets repository.SigningSe
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+				DialContext:     safedialer.NewSafeDialContext(5*time.Second, 30*time.Second),
 			},
 		},
 		logger:         logger.With("component", "webhook_notifier"),

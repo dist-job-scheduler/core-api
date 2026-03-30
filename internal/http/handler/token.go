@@ -47,7 +47,7 @@ type listTokenItem struct {
 func (h *TokenHandler) Create(ctx *gin.Context) {
 	var req createTokenRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": formatValidationError(err)})
 		return
 	}
 
