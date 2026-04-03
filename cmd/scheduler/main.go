@@ -71,6 +71,17 @@ func main() {
 	dispatcher := scheduler.NewDispatcher(scheduleRepo, creditRepo, logger, time.Duration(cfg.DispatchIntervalSec)*time.Second)
 	go dispatcher.Start(ctx)
 
+	bufferRepo := postgres.NewBufferRepository(pool)
+	drainer := scheduler.NewBufferDrainer(
+		bufferRepo, creditRepo, signingRepo, notifier, logger,
+		time.Duration(cfg.DrainerPollIntervalSec)*time.Second,
+		cfg.DrainerConcurrency,
+	)
+	go drainer.Start(ctx)
+
+	bufferReaper := scheduler.NewBufferReaper(bufferRepo, logger, 30*time.Second, 30*time.Second)
+	go bufferReaper.Start(ctx)
+
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)
 	go func() {
 		logger.Info("metrics server started", "port", cfg.MetricsPort)

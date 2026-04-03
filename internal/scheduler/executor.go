@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,6 +64,7 @@ type ExecutionResult struct {
 	StatusCode int
 	Err        error
 	Duration   time.Duration
+	RetryAfter *time.Duration // populated when status is 429 and Retry-After header is present
 }
 
 func (e *Executor) Run(ctx context.Context, job *domain.Job, signingSecret string) ExecutionResult {
@@ -124,5 +126,22 @@ func (e *Executor) Run(ctx context.Context, job *domain.Job, signingSecret strin
 		"duration", duration,
 	)
 
-	return ExecutionResult{StatusCode: resp.StatusCode, Duration: duration}
+	result := ExecutionResult{StatusCode: resp.StatusCode, Duration: duration}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if seconds, parseErr := strconv.Atoi(ra); parseErr == nil {
+				d := time.Duration(seconds) * time.Second
+				result.RetryAfter = &d
+			} else if t, parseErr := http.ParseTime(ra); parseErr == nil {
+				d := time.Until(t)
+				if d < 0 {
+					d = 0
+				}
+				result.RetryAfter = &d
+			}
+		}
+	}
+
+	return result
 }

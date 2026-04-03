@@ -20,5 +20,11 @@ const (
 
 	errSigningSecretNotFound = "No signing secret found to rotate"
 
+	errBufferNotFound      = "Buffer not found"
+	errBufferNameConflict  = "Buffer with this name already exists"
+	errBufferAlreadyPaused = "Buffer is already paused"
+	errBufferNotPaused     = "Buffer is not paused"
+	errBufferItemNotFound  = "Buffer item not found"
+
 	errInvalidLimit = "limit must be between 1 and 100"
 )
