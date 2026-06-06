@@ -144,13 +144,14 @@ func (m *MockAttemptRepository) ListByJobID(ctx context.Context, jobID string) (
 // ---------- MockCreditRepository ----------
 
 type MockCreditRepository struct {
-	EnsureExistsFn    func(ctx context.Context, userID string) error
-	GetBalanceFn      func(ctx context.Context, userID string) (*domain.CreditBalance, error)
-	HasCreditsFn      func(ctx context.Context, userID string) (bool, error)
-	DeductFn          func(ctx context.Context, userID, jobID string) error
-	TopUpFn           func(ctx context.Context, userID string, amount int64, stripePaymentIntentID string) error
-	UpdatePlanFn      func(ctx context.Context, userID string, plan domain.Plan) error
-	ListTransactionsFn func(ctx context.Context, userID string, cursor string, limit int) ([]domain.CreditTransaction, string, error)
+	EnsureExistsFn        func(ctx context.Context, userID string) error
+	GetBalanceFn          func(ctx context.Context, userID string) (*domain.CreditBalance, error)
+	HasCreditsFn          func(ctx context.Context, userID string) (bool, error)
+	DeductFn              func(ctx context.Context, userID, jobID string) error
+	DeductForBufferItemFn func(ctx context.Context, userID, bufferItemID string) error
+	TopUpFn               func(ctx context.Context, userID string, amount int64, stripePaymentIntentID string) error
+	UpdatePlanFn          func(ctx context.Context, userID string, plan domain.Plan) error
+	ListTransactionsFn    func(ctx context.Context, userID string, cursor string, limit int) ([]domain.CreditTransaction, string, error)
 }
 
 func (m *MockCreditRepository) EnsureExists(ctx context.Context, userID string) error {
@@ -177,6 +178,13 @@ func (m *MockCreditRepository) HasCredits(ctx context.Context, userID string) (b
 func (m *MockCreditRepository) Deduct(ctx context.Context, userID, jobID string) error {
 	if m.DeductFn != nil {
 		return m.DeductFn(ctx, userID, jobID)
+	}
+	return nil
+}
+
+func (m *MockCreditRepository) DeductForBufferItem(ctx context.Context, userID, bufferItemID string) error {
+	if m.DeductForBufferItemFn != nil {
+		return m.DeductForBufferItemFn(ctx, userID, bufferItemID)
 	}
 	return nil
 }
