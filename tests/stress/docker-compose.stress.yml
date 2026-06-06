@@ -1,0 +1,103 @@
+# Single reproducible env for buffer stress testing.
+#
+#   postgres  -> server + scheduler (the system under test, built from core-api)
+#   sink      -> controllable target the buffers point at
+#   k6        -> runs the specs (profile "k6"; invoked via `docker compose run`)
+#
+# Build contexts: the core-api images build from the repo root (../..); the sink
+# builds from ./sink. Numbers are kept light by the specs themselves.
+
+name: fliq-stress
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: scheduler
+      POSTGRES_PASSWORD: scheduler
+      POSTGRES_DB: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scheduler"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.migrate
+    command: ["postgres://scheduler:scheduler@postgres:5432/scheduler?sslmode=disable", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: [migrate]
+
+  server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.server
+    environment:
+      ENV: local
+      PORT: "8080"
+      DATABASE_URL: postgres://scheduler:scheduler@postgres:5432/scheduler?sslmode=disable
+      JWT_SECRET: stress-harness-local-secret-0123456789abcdef
+      LOG_LEVEL: info
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.scheduler
+    environment:
+      ENV: local
+      DATABASE_URL: postgres://scheduler:scheduler@postgres:5432/scheduler?sslmode=disable
+      LOG_LEVEL: info
+      # Light drainer settings; override on a beefier box.
+      DRAINER_POLL_INTERVAL_SEC: "1"
+      DRAINER_CONCURRENCY: "5"
+      WORKER_COUNT: "5"
+      POLL_INTERVAL_SEC: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # The sink sits on BOTH networks:
+  #   - web (Traefik): the core-api executor must reach it at a PUBLIC address,
+  #     because its SSRF guard (internal/safedialer) blocks private ranges. The
+  #     scheduler dials https://stress-sink.night.enkiduck.com -> public IP ->
+  #     Traefik -> here. This also exercises the real TLS/dial path (prod-like).
+  #   - default: k6 reads introspection directly (it isn't subject to the guard).
+  sink:
+    build:
+      context: ./sink
+    environment:
+      PORT: "9000"
+    networks: [default, web]
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.stresssink.rule=Host(`stress-sink.night.enkiduck.com`)"
+      - traefik.http.routers.stresssink.entrypoints=websecure
+      - traefik.http.routers.stresssink.tls.certresolver=le
+      - traefik.http.services.stresssink.loadbalancer.server.port=9000
+
+  k6:
+    image: grafana/k6:latest
+    profiles: [k6]
+    environment:
+      BASE_URL: http://server:8080
+      SINK_URL: http://sink:9000
+      # Public URL the core-api executor will accept (passes the SSRF guard).
+      SINK_TARGET_URL: https://stress-sink.night.enkiduck.com/ingest
+      JWT_SECRET: stress-harness-local-secret-0123456789abcdef
+      USER_ID: user_stress_local
+    volumes:
+      - ./k6:/scripts:ro
+    # Invoked via: docker compose run --rm k6 run /scripts/<spec>.js
+
+networks:
+  web:
+    external: true
