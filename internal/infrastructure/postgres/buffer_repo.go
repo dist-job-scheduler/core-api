@@ -250,7 +250,12 @@ func (r *BufferRepository) ListActiveBufferIDs(ctx context.Context, limit int) (
 	return ids, nil
 }
 
-func (r *BufferRepository) ClaimItems(ctx context.Context, bufferID, workerID string, limit int) ([]*domain.BufferItem, error) {
+func (r *BufferRepository) ClaimNextItem(ctx context.Context, bufferID, workerID string) (*domain.BufferItem, error) {
+	// The subquery picks the buffer's OLDEST pending item (head of the queue),
+	// regardless of whether it is due, but only while nothing is running for
+	// this buffer. The outer `scheduled_at <= NOW()` then claims it only if the
+	// head is actually due — so a head still in backoff blocks its successors
+	// (strict ordering) rather than letting a later item overtake it.
 	query := `
 		UPDATE buffer_items
 		SET    status       = 'running',
@@ -258,35 +263,33 @@ func (r *BufferRepository) ClaimItems(ctx context.Context, bufferID, workerID st
 		       claimed_by   = $1,
 		       heartbeat_at = NOW(),
 		       updated_at   = NOW()
-		WHERE id IN (
+		WHERE id = (
 			SELECT id FROM buffer_items
-			WHERE  buffer_id    = $2
-			  AND  status       = 'pending'
-			  AND  scheduled_at <= NOW()
+			WHERE  buffer_id = $2
+			  AND  status    = 'pending'
+			  AND  NOT EXISTS (
+				SELECT 1 FROM buffer_items running
+				WHERE  running.buffer_id = $2
+				  AND  running.status    = 'running'
+			  )
 			ORDER BY created_at ASC
-			LIMIT $3
+			LIMIT 1
 			FOR UPDATE SKIP LOCKED
 		)
+		  AND scheduled_at <= NOW()
 		RETURNING id, buffer_id, user_id, url, method, headers, body,
 		          timeout_seconds, backoff, status, retry_count, max_retries,
 		          scheduled_at, claimed_at, claimed_by, heartbeat_at,
 		          completed_at, last_error, status_code, created_at, updated_at`
 
-	rows, err := r.pool.Query(ctx, query, workerID, bufferID, limit)
+	item, err := scanBufferItem(r.pool.QueryRow(ctx, query, workerID, bufferID))
 	if err != nil {
-		return nil, fmt.Errorf("claim buffer items: %w", err)
-	}
-	defer rows.Close()
-
-	var items []*domain.BufferItem
-	for rows.Next() {
-		item, scanErr := scanBufferItem(rows)
-		if scanErr != nil {
-			return nil, scanErr
+		if errors.Is(err, domain.ErrBufferItemNotFound) {
+			return nil, nil // nothing claimable right now
 		}
-		items = append(items, item)
+		return nil, fmt.Errorf("claim next buffer item: %w", err)
 	}
-	return items, nil
+	return item, nil
 }
 
 func (r *BufferRepository) UpdateItemHeartbeat(ctx context.Context, itemID string) error {

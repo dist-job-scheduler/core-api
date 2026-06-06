@@ -101,19 +101,24 @@ func (d *BufferDrainer) drainBuffer(ctx context.Context, bufferID string) {
 		return
 	}
 
-	items, err := d.repo.ClaimItems(ctx, bufferID, d.id, buf.RateLimit)
-	if err != nil {
-		d.logger.ErrorContext(ctx, "claim buffer items", "buffer_id", bufferID, "error", err)
-		return
-	}
+	// Drain strictly in order: one item at a time, each to a terminal state
+	// before the next is claimed. ClaimNextItem returns nil when the head is not
+	// yet due (in backoff) or nothing is pending — either way we stop and let the
+	// next poll cycle resume. This preserves per-buffer (per-client) ordering.
+	for {
+		if ctx.Err() != nil {
+			return
+		}
 
-	if len(items) == 0 {
-		return
-	}
+		item, err := d.repo.ClaimNextItem(ctx, bufferID, d.id)
+		if err != nil {
+			d.logger.ErrorContext(ctx, "claim next buffer item", "buffer_id", bufferID, "error", err)
+			return
+		}
+		if item == nil {
+			return
+		}
 
-	d.logger.InfoContext(ctx, "claimed buffer items", "buffer_id", bufferID, "count", len(items))
-
-	for _, item := range items {
 		metrics.BufferItemsInFlight.Inc()
 		d.runItem(ctx, buf, item)
 		metrics.BufferItemsInFlight.Dec()
