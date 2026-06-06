@@ -15,4 +15,5 @@ When changing a design, update the relevant doc in the same PR.
 | [cron-scheduling.md](cron-scheduling.md) | Dispatcher, ClaimAndFire atomic tx, missed-run handling, credit gate |
 | [auth.md](auth.md) | JWT (Clerk RS256) + API tokens (fliq_sk_*), user-scoped 404s |
 | [billing.md](billing.md) | Credit model, lazy daily refresh, dual HasCredits gate, audit ledger |
+| [buffer-delivery.md](buffer-delivery.md) | Per-buffer ordering, ordered retries, skip-after-fail, per-second token bucket |
 | [observability.md](observability.md) | Structured logging, Prometheus metrics, health checks, request ID |
