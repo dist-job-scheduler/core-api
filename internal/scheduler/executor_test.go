@@ -139,6 +139,30 @@ func TestExecutor_Run_SetsRequestID(t *testing.T) {
 	}
 }
 
+func TestExecutor_Run_SetsDeliveryID(t *testing.T) {
+	var gotDeliveryID string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotDeliveryID = r.Header.Get("X-Fliq-Delivery-Id")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	exec := testExecutor()
+	job := testutil.NewJob(testutil.WithURL(srv.URL), testutil.WithMethod("POST"))
+	// A user-supplied header for the same key must not win.
+	job.Headers = map[string]string{"X-Fliq-Delivery-Id": "attacker-controlled"}
+
+	result := exec.Run(context.Background(), job, "")
+
+	if result.Err != nil {
+		t.Fatalf("Run() error = %v, want nil", result.Err)
+	}
+	if gotDeliveryID != job.ID {
+		t.Errorf("X-Fliq-Delivery-Id = %q, want %q (job ID)", gotDeliveryID, job.ID)
+	}
+}
+
 func TestExecutor_Run_BlocksSSRF(t *testing.T) {
 	// Use the production executor (with safe dialer) to verify SSRF blocking.
 	exec := scheduler.NewExecutor(slog.Default())

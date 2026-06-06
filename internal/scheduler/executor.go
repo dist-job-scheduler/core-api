@@ -87,6 +87,10 @@ func (e *Executor) Run(ctx context.Context, job *domain.Job, signingSecret strin
 		req.Header.Set(k, v)
 	}
 
+	// Set after user headers so it cannot be clobbered. Stable across retries
+	// and post-crash redeliveries; lets targets dedupe at-least-once deliveries.
+	req.Header.Set("X-Fliq-Delivery-Id", job.ID)
+
 	if signingSecret != "" {
 		var bodyBytes []byte
 		if job.Body != nil {
