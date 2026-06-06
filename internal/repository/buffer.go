@@ -38,8 +38,12 @@ type BufferRepository interface {
 
 	// Drainer-facing: find non-paused buffers that have pending items with scheduled_at <= now
 	ListActiveBufferIDs(ctx context.Context, limit int) ([]string, error)
-	// ClaimItems claims up to limit pending items for a buffer, FIFO order.
-	ClaimItems(ctx context.Context, bufferID, workerID string, limit int) ([]*domain.BufferItem, error)
+	// ClaimNextItem claims the single oldest due item for a buffer, but only if
+	// the buffer has no item currently running. This enforces strict per-buffer
+	// (per-client) ordering: at most one item in flight, and a retrying item
+	// (pending with a future scheduled_at) blocks its successors until terminal.
+	// Returns (nil, nil) when there is nothing to claim.
+	ClaimNextItem(ctx context.Context, bufferID, workerID string) (*domain.BufferItem, error)
 	UpdateItemHeartbeat(ctx context.Context, itemID string) error
 	CompleteItem(ctx context.Context, itemID string, statusCode int) error
 	FailItem(ctx context.Context, itemID string, lastError string, statusCode *int) error
