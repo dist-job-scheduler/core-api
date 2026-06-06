@@ -27,7 +27,7 @@ type CreditTxType string
 
 const (
 	CreditTxJobExecution    CreditTxType = "job_execution"
-	CreditTxBufferExecution CreditTxType = "buffer_execution"
+	CreditTxBufferExecution CreditTxType = "buffer_item_execution"
 	CreditTxDailyGrant      CreditTxType = "daily_grant"
 	CreditTxStripeTopup     CreditTxType = "stripe_topup"
 )

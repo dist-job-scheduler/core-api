@@ -27,6 +27,11 @@ type CreditRepository interface {
 	// sustained overdraft.
 	Deduct(ctx context.Context, userID, jobID string) error
 
+	// DeductForBufferItem subtracts 1 credit and records a buffer_item_execution
+	// transaction. Like Deduct, it is called once per execution attempt (success
+	// or failure) and is intentionally not idempotent.
+	DeductForBufferItem(ctx context.Context, userID, bufferItemID string) error
+
 	// TopUp adds credits and records a stripe_topup transaction. Called by the
 	// Stripe webhook handler on checkout.session.completed.
 	TopUp(ctx context.Context, userID string, amount int64, stripePaymentIntentID string) error

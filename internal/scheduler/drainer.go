@@ -161,7 +161,7 @@ func (d *BufferDrainer) runItem(ctx context.Context, buf *domain.Buffer, item *d
 	result := d.executor.Run(ctx, job, signingSecret)
 
 	// Deduct credit
-	if deductErr := d.credits.Deduct(ctx, item.UserID, item.ID); deductErr != nil {
+	if deductErr := d.credits.DeductForBufferItem(ctx, item.UserID, item.ID); deductErr != nil {
 		d.logger.WarnContext(ctx, "credit deduction failed", "item_id", item.ID, "error", deductErr)
 	}
 

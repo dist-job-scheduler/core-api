@@ -124,6 +124,17 @@ func (r *CreditRepo) HasCredits(ctx context.Context, userID string) (bool, error
 }
 
 func (r *CreditRepo) Deduct(ctx context.Context, userID, jobID string) error {
+	return r.deduct(ctx, userID, domain.CreditTxJobExecution, "job_id", jobID)
+}
+
+func (r *CreditRepo) DeductForBufferItem(ctx context.Context, userID, bufferItemID string) error {
+	return r.deduct(ctx, userID, domain.CreditTxBufferExecution, "buffer_item_id", bufferItemID)
+}
+
+// deduct subtracts 1 credit and records a ledger row referencing refColumn (a
+// jobs or buffer_items FK). Per-attempt billing: not idempotent, no uniqueness
+// on the reference column.
+func (r *CreditRepo) deduct(ctx context.Context, userID string, txType domain.CreditTxType, refColumn, refID string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -143,9 +154,9 @@ func (r *CreditRepo) Deduct(ctx context.Context, userID, jobID string) error {
 	}
 
 	_, err = tx.Exec(ctx,
-		`INSERT INTO credit_transactions (user_id, amount, type, job_id)
-		 VALUES ($1, -1, $2, $3)`,
-		userID, domain.CreditTxJobExecution, jobID,
+		fmt.Sprintf(`INSERT INTO credit_transactions (user_id, amount, type, %s)
+		 VALUES ($1, -1, $2, $3)`, refColumn),
+		userID, txType, refID,
 	)
 	if err != nil {
 		return fmt.Errorf("insert deduct tx: %w", err)
