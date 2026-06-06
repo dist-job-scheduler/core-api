@@ -251,20 +251,21 @@ func (r *BufferRepository) ListActiveBufferIDs(ctx context.Context, limit int) (
 }
 
 func (r *BufferRepository) ClaimNextItem(ctx context.Context, bufferID, workerID string) (*domain.BufferItem, error) {
-	// The subquery picks the buffer's OLDEST pending item (head of the queue),
-	// regardless of whether it is due, but only while nothing is running for
-	// this buffer. The outer `scheduled_at <= NOW()` then claims it only if the
-	// head is actually due — so a head still in backoff blocks its successors
-	// (strict ordering) rather than letting a later item overtake it.
+	// Claim the buffer's head item, gated by BOTH strict ordering and the
+	// per-buffer token bucket, in one atomic statement:
+	//   candidate — the oldest pending item, but only while nothing is running
+	//               for this buffer (one-in-flight ordering). Locked SKIP LOCKED.
+	//   due       — the candidate, only if it is actually due (a head still in
+	//               backoff blocks its successors instead of being overtaken).
+	//   bucket    — lazily refill tokens (rate_limit/sec, capped at rate_limit)
+	//               and consume one, but ONLY if a due item exists and a token is
+	//               available. No due item => no token spent.
+	// The final claim happens only if a token was consumed, so the rate limit and
+	// the ordering guarantee hold together, and the statement is safe across
+	// multiple scheduler replicas (row locks on both tables).
 	query := `
-		UPDATE buffer_items
-		SET    status       = 'running',
-		       claimed_at   = NOW(),
-		       claimed_by   = $1,
-		       heartbeat_at = NOW(),
-		       updated_at   = NOW()
-		WHERE id = (
-			SELECT id FROM buffer_items
+		WITH candidate AS (
+			SELECT id, scheduled_at FROM buffer_items
 			WHERE  buffer_id = $2
 			  AND  status    = 'pending'
 			  AND  NOT EXISTS (
@@ -275,8 +276,29 @@ func (r *BufferRepository) ClaimNextItem(ctx context.Context, bufferID, workerID
 			ORDER BY created_at ASC
 			LIMIT 1
 			FOR UPDATE SKIP LOCKED
+		),
+		due AS (
+			SELECT id FROM candidate WHERE scheduled_at <= NOW()
+		),
+		bucket AS (
+			UPDATE buffers b
+			SET    tokens = LEAST(b.rate_limit::double precision,
+			                      b.tokens + EXTRACT(EPOCH FROM (NOW() - b.last_refill_at)) * b.rate_limit) - 1,
+			       last_refill_at = NOW()
+			WHERE  b.id = $2
+			  AND  EXISTS (SELECT 1 FROM due)
+			  AND  LEAST(b.rate_limit::double precision,
+			             b.tokens + EXTRACT(EPOCH FROM (NOW() - b.last_refill_at)) * b.rate_limit) >= 1
+			RETURNING b.id
 		)
-		  AND scheduled_at <= NOW()
+		UPDATE buffer_items
+		SET    status       = 'running',
+		       claimed_at   = NOW(),
+		       claimed_by   = $1,
+		       heartbeat_at = NOW(),
+		       updated_at   = NOW()
+		WHERE  id IN (SELECT id FROM due)
+		  AND  EXISTS (SELECT 1 FROM bucket)
 		RETURNING id, buffer_id, user_id, url, method, headers, body,
 		          timeout_seconds, backoff, status, retry_count, max_retries,
 		          scheduled_at, claimed_at, claimed_by, heartbeat_at,
