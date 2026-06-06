@@ -10,9 +10,9 @@ Stop reinventing cron. Fliq lets you schedule one-off HTTP calls and recurring c
 
 **For startups** — Ship faster. Don't burn a sprint building a job queue. POST a job, move on. Fliq handles delivery, retries, and failure visibility out of the box.
 
-**For developers** — No SDKs, no magic. A clean REST API, API token auth (`fliq_sk_*`), idempotency keys, and full execution history per job. Works with any HTTP endpoint.
+**For developers** — No SDKs, no magic. A clean REST API, API token auth (`fliq_sk_*`), idempotency keys, and full execution history per job. Works with any HTTP endpoint. Delivery is at-least-once — every outbound request carries a stable `X-Fliq-Delivery-Id` header so your endpoint can dedupe.
 
-**For engineering leaders** — One less piece of infrastructure to own. Postgres-native, no Redis or Kafka required. Sub-2s pickup latency. Exactly-once execution via row-level locking. Designed to scale.
+**For engineering leaders** — One less piece of infrastructure to own. Postgres-native, no Redis or Kafka required. Sub-2s pickup latency. At-least-once execution with crash-safe retries via row-level locking. Designed to scale.
 
 ---
 
@@ -33,7 +33,7 @@ No seat fees. No contracts. Pay only for what you execute.
 |---|---|
 | One-off job scheduling — create, claim, execute, retry | ✅ Done |
 | Cron schedules — recurring jobs with pause/resume | ✅ Done |
-| Exactly-once execution (FOR UPDATE SKIP LOCKED + reaper) | ✅ Done |
+| At-least-once execution (FOR UPDATE SKIP LOCKED + reaper) | ✅ Done |
 | Crash recovery (heartbeat + reaper process) | ✅ Done |
 | API token auth (`fliq_sk_*`) + Clerk JWT | ✅ Done |
 | Per-user job isolation (ownership enforced at query level) | ✅ Done |
@@ -95,7 +95,7 @@ See `CLAUDE.md` for the full local setup guide and coding conventions.
 ### Phase 1 — Core backend ✅
 - Job CRUD, worker, reaper, retry with backoff
 - Cron schedules with pause/resume
-- Exactly-once execution via Postgres row-level locking
+- At-least-once execution with crash-safe retries via Postgres row-level locking
 - API token auth + Clerk JWT; jobs scoped to authenticated users
 - Credit system: free tier (5k/day) + pay-as-you-go via Stripe
 - CI: lint + test + migrations on every PR
