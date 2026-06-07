@@ -73,5 +73,10 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	// Webhook has no auth middleware — verified by Stripe signature
 	r.POST("/billing/webhook", billingHandler.HandleWebhook)
 
+	// Public, unauthenticated liveness endpoint. Polled by the marketing
+	// site's uptime widget and external monitors. No auth, no rate limit,
+	// no DB — reports that the API process is serving.
+	r.GET("/health", handler.Health)
+
 	return r
 }
