@@ -140,9 +140,15 @@ func (d *BufferDrainer) runItem(ctx context.Context, buf *domain.Buffer, item *d
 		return
 	}
 
+	// execCtx is fenced (cancelled with errLeaseLost) if we can no longer prove
+	// we hold this item — see heartbeat(). Critical for buffers: the strict
+	// one-in-flight-per-buffer invariant is only safe if a partitioned drainer
+	// stops executing before the reaper hands the item to another drainer.
+	execCtx, cancelExec := context.WithCancelCause(ctx)
+	defer cancelExec(nil)
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	defer cancelHeartbeat()
-	go d.heartbeat(heartbeatCtx, item.ID)
+	go d.heartbeat(heartbeatCtx, item.ID, func() { cancelExec(errLeaseLost) })
 
 	var signingSecret string
 	secret, secretErr := d.signingSecrets.GetActive(ctx, item.UserID)
@@ -163,7 +169,15 @@ func (d *BufferDrainer) runItem(ctx context.Context, buf *domain.Buffer, item *d
 		TimeoutSeconds: item.TimeoutSeconds,
 	}
 
-	result := d.executor.Run(ctx, job, signingSecret)
+	result := d.executor.Run(execCtx, job, signingSecret)
+
+	// Lost our lease mid-flight: the reaper now owns this item. Relinquish
+	// without writing any outcome — the reaper recovers it, preserving the
+	// one-in-flight invariant. The open item stays for the reaper to reschedule.
+	if errors.Is(context.Cause(execCtx), errLeaseLost) {
+		d.logger.ErrorContext(ctx, "relinquished buffer item after lease loss; reaper will recover", "item_id", item.ID)
+		return
+	}
 
 	// Deduct credit
 	if deductErr := d.credits.DeductForBufferItem(ctx, item.UserID, item.ID); deductErr != nil {
@@ -231,16 +245,31 @@ func (d *BufferDrainer) runItem(ctx context.Context, buf *domain.Buffer, item *d
 	}
 }
 
-func (d *BufferDrainer) heartbeat(ctx context.Context, itemID string) {
-	ticker := time.NewTicker(10 * time.Second)
+// heartbeat keeps the item's heartbeat_at fresh. If it can't update for
+// heartbeatLeaseTimeout it calls onLeaseLost to fence the in-flight execution
+// before the reaper reschedules the item (see worker.go for the shared
+// constants and the lease/reaper-cutoff relationship).
+func (d *BufferDrainer) heartbeat(ctx context.Context, itemID string, onLeaseLost func()) {
+	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
+	lastSuccess := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if err := d.repo.UpdateItemHeartbeat(ctx, itemID); err != nil {
-				d.logger.WarnContext(ctx, "buffer item heartbeat failed", "item_id", itemID, "error", err)
+				staleFor := time.Since(lastSuccess)
+				d.logger.WarnContext(ctx, "buffer item heartbeat failed", "item_id", itemID, "stale_for", staleFor, "error", err)
+				if staleFor >= heartbeatLeaseTimeout {
+					d.logger.ErrorContext(ctx, "buffer item heartbeat lease lost, fencing in-flight execution",
+						"item_id", itemID, "stale_for", staleFor)
+					metrics.LeaseLostTotal.Inc()
+					onLeaseLost()
+					return
+				}
+			} else {
+				lastSuccess = time.Now()
 			}
 		}
 	}

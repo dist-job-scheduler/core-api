@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync/atomic"
 	"testing"
@@ -132,7 +133,7 @@ func TestWorker_Heartbeat_FiresEvery10s(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithCancel(t.Context())
-		go w.heartbeat(ctx, "job-123")
+		go w.heartbeat(ctx, "job-123", func() {})
 
 		// First heartbeat at 10s.
 		time.Sleep(10 * time.Second)
@@ -160,5 +161,70 @@ func TestWorker_Heartbeat_FiresEvery10s(t *testing.T) {
 
 		cancel()
 		synctest.Wait()
+	})
+}
+
+// When the heartbeat can't reach the DB for heartbeatLeaseTimeout, the worker
+// must fence its own in-flight execution (call onLeaseLost) so the reaper can
+// safely re-run the job elsewhere without a duplicate concurrent delivery.
+func TestWorker_Heartbeat_FencesOnLeaseLoss(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var fenced atomic.Bool
+
+		repo := &testutil.MockJobRepository{
+			UpdateHeartbeatFn: func(ctx context.Context, jobID string) error {
+				return errors.New("db unreachable")
+			},
+		}
+
+		w := &Worker{repo: repo, logger: slog.Default()}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go w.heartbeat(ctx, "job-123", func() { fenced.Store(true) })
+
+		// At 10s: first failed beat, stale=10s < 20s lease → not yet fenced.
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		if fenced.Load() {
+			t.Fatal("fenced after 10s; want fence only once the 20s lease expires")
+		}
+
+		// At 20s: stale=20s ≥ 20s lease → fenced.
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		if !fenced.Load() {
+			t.Fatal("not fenced after 20s of failed heartbeats; want fenced")
+		}
+	})
+}
+
+// A single transient heartbeat failure (e.g. a few seconds of Postgres failover)
+// must NOT fence the execution — the next successful beat resets the lease.
+func TestWorker_Heartbeat_RidesOutTransientBlip(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var fenced atomic.Bool
+		var calls atomic.Int32
+
+		repo := &testutil.MockJobRepository{
+			UpdateHeartbeatFn: func(ctx context.Context, jobID string) error {
+				if calls.Add(1) == 1 {
+					return errors.New("transient blip")
+				}
+				return nil
+			},
+		}
+
+		w := &Worker{repo: repo, logger: slog.Default()}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go w.heartbeat(ctx, "job-123", func() { fenced.Store(true) })
+
+		time.Sleep(45 * time.Second)
+		synctest.Wait()
+		if fenced.Load() {
+			t.Fatal("fenced after a single transient failure; should ride out brief blips")
+		}
 	})
 }

@@ -67,6 +67,15 @@ var (
 		Help:      "Number of times the worker has shut down.",
 	})
 
+	// LeaseLostTotal counts in-flight jobs aborted because the worker could not
+	// refresh its heartbeat lease (DB partition). A non-zero rate means a worker
+	// was fenced off so the reaper could safely re-run the job elsewhere.
+	LeaseLostTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "scheduler",
+		Name:      "worker_lease_lost_total",
+		Help:      "Number of in-flight executions (jobs or buffer items) aborted after losing the heartbeat lease.",
+	})
+
 	// HTTP metrics
 
 	HTTPRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -150,6 +159,7 @@ func Register() {
 		ReaperCycleDuration,
 		WorkerStartTime,
 		WorkerShutdownsTotal,
+		LeaseLostTotal,
 		HTTPRequestDuration,
 		HTTPRequestsTotal,
 		WebhookDeliveriesTotal,
