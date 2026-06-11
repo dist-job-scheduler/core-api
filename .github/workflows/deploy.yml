@@ -116,6 +116,7 @@ jobs:
           kubectl apply -f infra/k8s/server.yaml
           kubectl apply -f infra/k8s/scheduler.yaml
           kubectl apply -f infra/k8s/ingress.yaml
+          kubectl apply -f infra/k8s/frontend-ingress.yaml
           kubectl rollout restart deployment/server -n dist-scheduler
           kubectl rollout restart deployment/scheduler -n dist-scheduler
 
