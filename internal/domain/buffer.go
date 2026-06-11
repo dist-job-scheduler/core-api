@@ -6,11 +6,12 @@ import (
 )
 
 var (
-	ErrBufferNotFound      = errors.New("buffer not found")
-	ErrBufferNameConflict  = errors.New("buffer with this name already exists")
-	ErrBufferAlreadyPaused = errors.New("buffer is already paused")
-	ErrBufferNotPaused     = errors.New("buffer is not paused")
-	ErrBufferItemNotFound  = errors.New("buffer item not found")
+	ErrBufferNotFound          = errors.New("buffer not found")
+	ErrBufferNameConflict      = errors.New("buffer with this name already exists")
+	ErrBufferAlreadyPaused     = errors.New("buffer is already paused")
+	ErrBufferNotPaused         = errors.New("buffer is not paused")
+	ErrBufferItemNotFound      = errors.New("buffer item not found")
+	ErrBufferItemNotReplayable = errors.New("buffer item is not in a replayable state")
 )
 
 type BufferItemStatus string
@@ -54,6 +55,10 @@ type BufferItem struct {
 	Status     BufferItemStatus
 	RetryCount int
 	MaxRetries int
+
+	// ReplayOf is the ID of the failed item this one was cloned from via the
+	// item replay endpoint. Nil for ordinary items.
+	ReplayOf *string
 
 	ScheduledAt time.Time
 	ClaimedAt   *time.Time

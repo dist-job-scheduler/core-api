@@ -144,22 +144,47 @@ func (r *BufferRepository) Delete(ctx context.Context, id, userID string) error 
 	return nil
 }
 
+// BufferStats returns the item status breakdown for one buffer. Ownership is
+// assumed to have been verified by the caller (usecase GetByID).
+func (r *BufferRepository) BufferStats(ctx context.Context, bufferID string) (domain.BufferStats, error) {
+	var s domain.BufferStats
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE status = 'pending'),
+			COUNT(*) FILTER (WHERE status = 'running'),
+			COUNT(*) FILTER (WHERE status = 'completed'),
+			COUNT(*) FILTER (WHERE status = 'failed'),
+			COUNT(*)
+		FROM buffer_items
+		WHERE buffer_id = $1`,
+		bufferID,
+	).Scan(&s.Pending, &s.Running, &s.Completed, &s.Failed, &s.Total)
+	if err != nil {
+		return domain.BufferStats{}, fmt.Errorf("buffer stats: %w", err)
+	}
+
+	if terminal := s.Completed + s.Failed; terminal > 0 {
+		s.SuccessRate = float64(s.Completed) / float64(terminal)
+	}
+	return s, nil
+}
+
 // ── Item CRUD ────────────────────────────────────────────────────────────────
 
 func (r *BufferRepository) CreateItem(ctx context.Context, item *domain.BufferItem) (*domain.BufferItem, error) {
 	query := `
 		INSERT INTO buffer_items (
 			buffer_id, user_id, url, method, headers, body,
-			timeout_seconds, backoff, status, max_retries, scheduled_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			timeout_seconds, backoff, status, max_retries, scheduled_at, replay_of
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, buffer_id, user_id, url, method, headers, body,
 		          timeout_seconds, backoff, status, retry_count, max_retries,
 		          scheduled_at, claimed_at, claimed_by, heartbeat_at,
-		          completed_at, last_error, status_code, created_at, updated_at`
+		          completed_at, last_error, status_code, created_at, updated_at, replay_of`
 
 	row := r.pool.QueryRow(ctx, query,
 		item.BufferID, item.UserID, item.URL, item.Method, item.Headers, item.Body,
-		item.TimeoutSeconds, item.Backoff, item.Status, item.MaxRetries, item.ScheduledAt,
+		item.TimeoutSeconds, item.Backoff, item.Status, item.MaxRetries, item.ScheduledAt, item.ReplayOf,
 	)
 
 	return scanBufferItem(row)
@@ -170,7 +195,7 @@ func (r *BufferRepository) GetItemByID(ctx context.Context, itemID, bufferID str
 		SELECT id, buffer_id, user_id, url, method, headers, body,
 		       timeout_seconds, backoff, status, retry_count, max_retries,
 		       scheduled_at, claimed_at, claimed_by, heartbeat_at,
-		       completed_at, last_error, status_code, created_at, updated_at
+		       completed_at, last_error, status_code, created_at, updated_at, replay_of
 		FROM buffer_items
 		WHERE id = $1 AND buffer_id = $2`
 
@@ -196,7 +221,7 @@ func (r *BufferRepository) ListItems(ctx context.Context, input repository.ListB
 		SELECT id, buffer_id, user_id, url, method, headers, body,
 		       timeout_seconds, backoff, status, retry_count, max_retries,
 		       scheduled_at, claimed_at, claimed_by, heartbeat_at,
-		       completed_at, last_error, status_code, created_at, updated_at
+		       completed_at, last_error, status_code, created_at, updated_at, replay_of
 		FROM buffer_items
 		WHERE %s
 		ORDER BY created_at DESC, id DESC
@@ -302,7 +327,7 @@ func (r *BufferRepository) ClaimNextItem(ctx context.Context, bufferID, workerID
 		RETURNING id, buffer_id, user_id, url, method, headers, body,
 		          timeout_seconds, backoff, status, retry_count, max_retries,
 		          scheduled_at, claimed_at, claimed_by, heartbeat_at,
-		          completed_at, last_error, status_code, created_at, updated_at`
+		          completed_at, last_error, status_code, created_at, updated_at, replay_of`
 
 	item, err := scanBufferItem(r.pool.QueryRow(ctx, query, workerID, bufferID))
 	if err != nil {
@@ -418,7 +443,7 @@ func scanBufferItem(row rowScanner) (*domain.BufferItem, error) {
 		&item.ID, &item.BufferID, &item.UserID, &item.URL, &item.Method, &item.Headers, &item.Body,
 		&item.TimeoutSeconds, &item.Backoff, &item.Status, &item.RetryCount, &item.MaxRetries,
 		&item.ScheduledAt, &item.ClaimedAt, &item.ClaimedBy, &item.HeartbeatAt,
-		&item.CompletedAt, &item.LastError, &item.StatusCode, &item.CreatedAt, &item.UpdatedAt,
+		&item.CompletedAt, &item.LastError, &item.StatusCode, &item.CreatedAt, &item.UpdatedAt, &item.ReplayOf,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

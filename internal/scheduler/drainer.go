@@ -25,6 +25,7 @@ type BufferDrainer struct {
 	signingSecrets repository.SigningSecretRepository
 	executor       *Executor
 	notifier       *WebhookNotifier
+	alerts         *AlertNotifier
 	logger         *slog.Logger
 	pollInterval   time.Duration
 	concurrency    int
@@ -36,6 +37,7 @@ func NewBufferDrainer(
 	credits repository.CreditRepository,
 	signingSecrets repository.SigningSecretRepository,
 	notifier *WebhookNotifier,
+	alerts *AlertNotifier,
 	logger *slog.Logger,
 	pollInterval time.Duration,
 	concurrency int,
@@ -49,11 +51,29 @@ func NewBufferDrainer(
 		signingSecrets: signingSecrets,
 		executor:       NewExecutor(logger),
 		notifier:       notifier,
+		alerts:         alerts,
 		logger:         logger.With("component", "buffer_drainer", "worker_id", id),
 		pollInterval:   pollInterval,
 		concurrency:    concurrency,
 		sem:            make(chan struct{}, concurrency),
 	}
+}
+
+// alertItemFailure fires a best-effort failure alert for a permanently-failed
+// buffer item.
+func (d *BufferDrainer) alertItemFailure(ctx context.Context, item *domain.BufferItem, statusCode *int, errMsg string) {
+	d.alerts.NotifyFailureAsync(ctx, domain.AlertEvent{
+		UserID:       item.UserID,
+		ResourceType: domain.AlertResourceBufferItem,
+		ResourceID:   item.ID,
+		BufferID:     item.BufferID,
+		URL:          item.URL,
+		Method:       item.Method,
+		LastError:    errMsg,
+		StatusCode:   statusCode,
+		Attempts:     item.RetryCount + 1,
+		FailedAt:     time.Now(),
+	})
 }
 
 func (d *BufferDrainer) Start(ctx context.Context) {
@@ -137,6 +157,7 @@ func (d *BufferDrainer) runItem(ctx context.Context, buf *domain.Buffer, item *d
 		}
 		metrics.BufferItemsCompletedTotal.WithLabelValues("failed").Inc()
 		d.notifyBufferItem(ctx, buf, item, domain.BufferItemFailed, nil, &errMsg)
+		d.alertItemFailure(ctx, item, nil, errMsg)
 		return
 	}
 
@@ -227,6 +248,7 @@ func (d *BufferDrainer) runItem(ctx context.Context, buf *domain.Buffer, item *d
 		}
 		metrics.BufferItemsCompletedTotal.WithLabelValues("failed").Inc()
 		d.notifyBufferItem(ctx, buf, item, domain.BufferItemFailed, statusCode, &errMsg)
+		d.alertItemFailure(ctx, item, statusCode, errMsg)
 		d.logger.WarnContext(ctx, "buffer item permanently failed", "item_id", item.ID, "error", errMsg)
 	}
 }

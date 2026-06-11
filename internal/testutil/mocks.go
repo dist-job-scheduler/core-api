@@ -352,6 +352,204 @@ func (m *MockStripeCustomerRepository) Save(ctx context.Context, userID, stripeC
 	return nil
 }
 
+// ---------- MockAlertChannelRepository ----------
+
+type MockAlertChannelRepository struct {
+	CreateFn      func(ctx context.Context, ch *domain.AlertChannel) (*domain.AlertChannel, error)
+	GetByIDFn     func(ctx context.Context, id, userID string) (*domain.AlertChannel, error)
+	ListFn        func(ctx context.Context, userID string) ([]*domain.AlertChannel, error)
+	SetEnabledFn  func(ctx context.Context, id, userID string, enabled bool) error
+	DeleteFn      func(ctx context.Context, id, userID string) error
+	ListEnabledFn func(ctx context.Context, userID string) ([]*domain.AlertChannel, error)
+}
+
+func (m *MockAlertChannelRepository) Create(ctx context.Context, ch *domain.AlertChannel) (*domain.AlertChannel, error) {
+	if m.CreateFn != nil {
+		return m.CreateFn(ctx, ch)
+	}
+	ch.ID = "alert-1"
+	ch.CreatedAt = time.Now()
+	ch.UpdatedAt = ch.CreatedAt
+	return ch, nil
+}
+
+func (m *MockAlertChannelRepository) GetByID(ctx context.Context, id, userID string) (*domain.AlertChannel, error) {
+	if m.GetByIDFn != nil {
+		return m.GetByIDFn(ctx, id, userID)
+	}
+	return nil, domain.ErrAlertChannelNotFound
+}
+
+func (m *MockAlertChannelRepository) List(ctx context.Context, userID string) ([]*domain.AlertChannel, error) {
+	if m.ListFn != nil {
+		return m.ListFn(ctx, userID)
+	}
+	return nil, nil
+}
+
+func (m *MockAlertChannelRepository) SetEnabled(ctx context.Context, id, userID string, enabled bool) error {
+	if m.SetEnabledFn != nil {
+		return m.SetEnabledFn(ctx, id, userID, enabled)
+	}
+	return nil
+}
+
+func (m *MockAlertChannelRepository) Delete(ctx context.Context, id, userID string) error {
+	if m.DeleteFn != nil {
+		return m.DeleteFn(ctx, id, userID)
+	}
+	return nil
+}
+
+func (m *MockAlertChannelRepository) ListEnabled(ctx context.Context, userID string) ([]*domain.AlertChannel, error) {
+	if m.ListEnabledFn != nil {
+		return m.ListEnabledFn(ctx, userID)
+	}
+	return nil, nil
+}
+
+// ---------- MockStatsRepository ----------
+
+type MockStatsRepository struct {
+	JobStatsFn    func(ctx context.Context, userID string, since time.Time) (domain.JobStats, error)
+	UsageSeriesFn func(ctx context.Context, userID string, since time.Time) ([]domain.UsageBucket, error)
+}
+
+func (m *MockStatsRepository) JobStats(ctx context.Context, userID string, since time.Time) (domain.JobStats, error) {
+	if m.JobStatsFn != nil {
+		return m.JobStatsFn(ctx, userID, since)
+	}
+	return domain.JobStats{}, nil
+}
+
+func (m *MockStatsRepository) UsageSeries(ctx context.Context, userID string, since time.Time) ([]domain.UsageBucket, error) {
+	if m.UsageSeriesFn != nil {
+		return m.UsageSeriesFn(ctx, userID, since)
+	}
+	return nil, nil
+}
+
+// ---------- MockBufferRepository ----------
+
+// MockBufferRepository implements repository.BufferRepository. Only the methods
+// exercised by a given test need a *Fn hook; the rest return zero values.
+type MockBufferRepository struct {
+	CreateFn          func(ctx context.Context, b *domain.Buffer) (*domain.Buffer, error)
+	GetByIDFn         func(ctx context.Context, id, userID string) (*domain.Buffer, error)
+	GetByIDInternalFn func(ctx context.Context, id string) (*domain.Buffer, error)
+	ListFn            func(ctx context.Context, input repository.ListBuffersInput) ([]*domain.Buffer, error)
+	SetPausedFn       func(ctx context.Context, id, userID string, paused bool) error
+	DeleteFn          func(ctx context.Context, id, userID string) error
+	BufferStatsFn     func(ctx context.Context, bufferID string) (domain.BufferStats, error)
+	CreateItemFn      func(ctx context.Context, item *domain.BufferItem) (*domain.BufferItem, error)
+	GetItemByIDFn     func(ctx context.Context, itemID, bufferID string) (*domain.BufferItem, error)
+	ListItemsFn       func(ctx context.Context, input repository.ListBufferItemsInput) ([]*domain.BufferItem, error)
+}
+
+func (m *MockBufferRepository) Create(ctx context.Context, b *domain.Buffer) (*domain.Buffer, error) {
+	if m.CreateFn != nil {
+		return m.CreateFn(ctx, b)
+	}
+	b.ID = "buffer-1"
+	return b, nil
+}
+
+func (m *MockBufferRepository) GetByID(ctx context.Context, id, userID string) (*domain.Buffer, error) {
+	if m.GetByIDFn != nil {
+		return m.GetByIDFn(ctx, id, userID)
+	}
+	return nil, domain.ErrBufferNotFound
+}
+
+func (m *MockBufferRepository) GetByIDInternal(ctx context.Context, id string) (*domain.Buffer, error) {
+	if m.GetByIDInternalFn != nil {
+		return m.GetByIDInternalFn(ctx, id)
+	}
+	return nil, domain.ErrBufferNotFound
+}
+
+func (m *MockBufferRepository) List(ctx context.Context, input repository.ListBuffersInput) ([]*domain.Buffer, error) {
+	if m.ListFn != nil {
+		return m.ListFn(ctx, input)
+	}
+	return nil, nil
+}
+
+func (m *MockBufferRepository) SetPaused(ctx context.Context, id, userID string, paused bool) error {
+	if m.SetPausedFn != nil {
+		return m.SetPausedFn(ctx, id, userID, paused)
+	}
+	return nil
+}
+
+func (m *MockBufferRepository) Delete(ctx context.Context, id, userID string) error {
+	if m.DeleteFn != nil {
+		return m.DeleteFn(ctx, id, userID)
+	}
+	return nil
+}
+
+func (m *MockBufferRepository) BufferStats(ctx context.Context, bufferID string) (domain.BufferStats, error) {
+	if m.BufferStatsFn != nil {
+		return m.BufferStatsFn(ctx, bufferID)
+	}
+	return domain.BufferStats{}, nil
+}
+
+func (m *MockBufferRepository) CreateItem(ctx context.Context, item *domain.BufferItem) (*domain.BufferItem, error) {
+	if m.CreateItemFn != nil {
+		return m.CreateItemFn(ctx, item)
+	}
+	item.ID = "item-1"
+	return item, nil
+}
+
+func (m *MockBufferRepository) GetItemByID(ctx context.Context, itemID, bufferID string) (*domain.BufferItem, error) {
+	if m.GetItemByIDFn != nil {
+		return m.GetItemByIDFn(ctx, itemID, bufferID)
+	}
+	return nil, domain.ErrBufferItemNotFound
+}
+
+func (m *MockBufferRepository) ListItems(ctx context.Context, input repository.ListBufferItemsInput) ([]*domain.BufferItem, error) {
+	if m.ListItemsFn != nil {
+		return m.ListItemsFn(ctx, input)
+	}
+	return nil, nil
+}
+
+func (m *MockBufferRepository) ListActiveBufferIDs(ctx context.Context, limit int) ([]string, error) {
+	return nil, nil
+}
+
+func (m *MockBufferRepository) ClaimNextItem(ctx context.Context, bufferID, workerID string) (*domain.BufferItem, error) {
+	return nil, nil
+}
+
+func (m *MockBufferRepository) UpdateItemHeartbeat(ctx context.Context, itemID string) error {
+	return nil
+}
+
+func (m *MockBufferRepository) CompleteItem(ctx context.Context, itemID string, statusCode int) error {
+	return nil
+}
+
+func (m *MockBufferRepository) FailItem(ctx context.Context, itemID string, lastError string, statusCode *int) error {
+	return nil
+}
+
+func (m *MockBufferRepository) RescheduleItem(ctx context.Context, itemID string, lastError string, statusCode *int, retryAt time.Time) error {
+	return nil
+}
+
+func (m *MockBufferRepository) RescheduleStaleItems(ctx context.Context, staleCutoff time.Time, limit int) (int, error) {
+	return 0, nil
+}
+
+func (m *MockBufferRepository) FailStaleItems(ctx context.Context, staleCutoff time.Time, limit int) (int, error) {
+	return 0, nil
+}
+
 // ---------- MockSigningSecretRepository ----------
 
 type MockSigningSecretRepository struct {

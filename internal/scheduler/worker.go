@@ -24,6 +24,7 @@ type Worker struct {
 	signingSecrets repository.SigningSecretRepository
 	executor       *Executor
 	notifier       *WebhookNotifier
+	alerts         *AlertNotifier
 	logger         *slog.Logger
 	pollInterval   time.Duration
 	concurrency    int
@@ -35,6 +36,7 @@ func NewWorker(
 	attempts repository.AttemptRepository,
 	credits repository.CreditRepository,
 	notifier *WebhookNotifier,
+	alerts *AlertNotifier,
 	logger *slog.Logger,
 	pollInterval time.Duration,
 	concurrency int,
@@ -50,11 +52,27 @@ func NewWorker(
 		signingSecrets: signingSecrets,
 		executor:       NewExecutor(logger),
 		notifier:       notifier,
+		alerts:         alerts,
 		logger:         logger.With("worker_id", id),
 		pollInterval:   pollInterval,
 		concurrency:    concurrency,
 		sem:            make(chan struct{}, concurrency),
 	}
+}
+
+// alertJobFailure fires a best-effort failure alert for a permanently-failed job.
+func (w *Worker) alertJobFailure(ctx context.Context, job *domain.Job, statusCode *int, errMsg string) {
+	w.alerts.NotifyFailureAsync(ctx, domain.AlertEvent{
+		UserID:       job.UserID,
+		ResourceType: domain.AlertResourceJob,
+		ResourceID:   job.ID,
+		URL:          job.URL,
+		Method:       job.Method,
+		LastError:    errMsg,
+		StatusCode:   statusCode,
+		Attempts:     job.RetryCount + 1,
+		FailedAt:     time.Now(),
+	})
 }
 
 func (w *Worker) Start(ctx context.Context) {
@@ -142,6 +160,7 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 		job.Status = domain.StatusFailed
 		job.LastError = &errMsg
 		w.notifier.notifyAsync(ctx, job, nil)
+		w.alertJobFailure(ctx, job, nil, errMsg)
 		w.logger.WarnContext(ctx, "job permanently failed: insufficient credits", "job_id", job.ID)
 		return
 	}
@@ -220,6 +239,7 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 		job.Status = domain.StatusFailed
 		job.LastError = &errMsg
 		w.notifier.notifyAsync(ctx, job, statusCode)
+		w.alertJobFailure(ctx, job, statusCode, errMsg)
 		metrics.JobsCompletedTotal.WithLabelValues("failed").Inc()
 		w.logger.WarnContext(ctx, "job permanently failed", "job_id", job.ID, "error", errMsg)
 	}

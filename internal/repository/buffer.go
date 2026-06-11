@@ -31,6 +31,9 @@ type BufferRepository interface {
 	SetPaused(ctx context.Context, id, userID string, paused bool) error
 	Delete(ctx context.Context, id, userID string) error
 
+	// BufferStats returns the item status breakdown for a single buffer.
+	BufferStats(ctx context.Context, bufferID string) (domain.BufferStats, error)
+
 	// Item CRUD
 	CreateItem(ctx context.Context, item *domain.BufferItem) (*domain.BufferItem, error)
 	GetItemByID(ctx context.Context, itemID, bufferID string) (*domain.BufferItem, error)

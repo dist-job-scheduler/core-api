@@ -171,6 +171,18 @@ func (u *BufferUsecase) ResumeBuffer(ctx context.Context, id, userID string) err
 	return nil
 }
 
+// GetBufferStats returns the item status breakdown for a buffer the user owns.
+func (u *BufferUsecase) GetBufferStats(ctx context.Context, id, userID string) (domain.BufferStats, error) {
+	if _, err := u.repo.GetByID(ctx, id, userID); err != nil {
+		return domain.BufferStats{}, fmt.Errorf("get buffer: %w", err)
+	}
+	stats, err := u.repo.BufferStats(ctx, id)
+	if err != nil {
+		return domain.BufferStats{}, fmt.Errorf("buffer stats: %w", err)
+	}
+	return stats, nil
+}
+
 func (u *BufferUsecase) DeleteBuffer(ctx context.Context, id, userID string) error {
 	if err := u.repo.Delete(ctx, id, userID); err != nil {
 		return fmt.Errorf("delete buffer: %w", err)
@@ -241,6 +253,58 @@ func (u *BufferUsecase) GetItem(ctx context.Context, itemID, bufferID, userID st
 		return nil, fmt.Errorf("get buffer item: %w", err)
 	}
 	return item, nil
+}
+
+// ReplayItem clones a permanently-failed buffer item into a fresh pending item
+// appended to the tail of the buffer (new created_at), so it drains in order
+// after the current queue rather than jumping ahead of in-flight work. The
+// original failed item is left as history; the clone carries a replay_of pointer
+// back to it.
+func (u *BufferUsecase) ReplayItem(ctx context.Context, itemID, bufferID, userID string) (*domain.BufferItem, error) {
+	// Verify buffer ownership.
+	buf, err := u.repo.GetByID(ctx, bufferID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get buffer: %w", err)
+	}
+
+	item, err := u.repo.GetItemByID(ctx, itemID, bufferID)
+	if err != nil {
+		return nil, fmt.Errorf("get buffer item: %w", err)
+	}
+
+	if item.Status != domain.BufferItemFailed {
+		return nil, domain.ErrBufferItemNotReplayable
+	}
+
+	// A replay enqueues a new execution — gate it on credits like a fresh push.
+	ok, err := u.credits.HasCredits(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("check credits: %w", err)
+	}
+	if !ok {
+		return nil, domain.ErrInsufficientCredits
+	}
+
+	clone := &domain.BufferItem{
+		BufferID:       buf.ID,
+		UserID:         userID,
+		URL:            item.URL,
+		Method:         item.Method,
+		Headers:        item.Headers,
+		Body:           item.Body,
+		TimeoutSeconds: item.TimeoutSeconds,
+		Backoff:        item.Backoff,
+		Status:         domain.BufferItemPending,
+		MaxRetries:     item.MaxRetries,
+		ScheduledAt:    time.Now(),
+		ReplayOf:       &item.ID,
+	}
+
+	created, err := u.repo.CreateItem(ctx, clone)
+	if err != nil {
+		return nil, fmt.Errorf("create replay item: %w", err)
+	}
+	return created, nil
 }
 
 type ListBufferItemsInput struct {

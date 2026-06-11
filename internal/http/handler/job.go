@@ -101,6 +101,43 @@ func (h *JobHandler) Cancel(ctx *gin.Context) {
 	ctx.Status(http.StatusNoContent)
 }
 
+type replayJobResponse struct {
+	ID          string        `json:"id"`
+	Status      domain.Status `json:"status"`
+	ReplayOf    *string       `json:"replay_of,omitempty"`
+	ScheduledAt time.Time     `json:"scheduled_at"`
+	CreatedAt   time.Time     `json:"created_at"`
+}
+
+// Replay clones a permanently-failed job into a fresh pending job.
+func (h *JobHandler) Replay(ctx *gin.Context) {
+	jobID := ctx.Param("id")
+
+	job, err := h.jobUsecase.Replay(ctx.Request.Context(), jobID, ctx.GetString("userID"))
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrJobNotFound):
+			ctx.JSON(http.StatusNotFound, gin.H{"error": errJobNotFound})
+		case errors.Is(err, domain.ErrJobNotReplayable):
+			ctx.JSON(http.StatusConflict, gin.H{"error": errJobNotReplayable})
+		case errors.Is(err, domain.ErrInsufficientCredits):
+			ctx.JSON(http.StatusPaymentRequired, gin.H{"error": errInsufficientCredits})
+		default:
+			h.logger.ErrorContext(ctx.Request.Context(), "replay job", "job_id", jobID, "error", err)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, replayJobResponse{
+		ID:          job.ID,
+		Status:      job.Status,
+		ReplayOf:    job.ReplayOf,
+		ScheduledAt: job.ScheduledAt,
+		CreatedAt:   job.CreatedAt,
+	})
+}
+
 func (h *JobHandler) List(ctx *gin.Context) {
 	limit, err := parseLimit(ctx.Query("limit"))
 	if err != nil {

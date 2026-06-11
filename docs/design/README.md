@@ -16,4 +16,5 @@ When changing a design, update the relevant doc in the same PR.
 | [auth.md](auth.md) | JWT (Clerk RS256) + API tokens (fliq_sk_*), user-scoped 404s |
 | [billing.md](billing.md) | Credit model, lazy daily refresh, dual HasCredits gate, audit ledger |
 | [buffer-delivery.md](buffer-delivery.md) | Per-buffer ordering, ordered retries, skip-after-fail, per-second token bucket |
+| [alerts-analytics-replay.md](alerts-analytics-replay.md) | Failure alert channels, usage/failure analytics, dead-letter replay (clone-not-reset) |
 | [observability.md](observability.md) | Structured logging, Prometheus metrics, health checks, request ID |

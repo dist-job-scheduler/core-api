@@ -6,10 +6,11 @@ import (
 )
 
 var (
-	ErrJobNotFound      = errors.New("job not found")
-	ErrDuplicateJob     = errors.New("job with this idempotency key already exists")
-	ErrInvalidStatus    = errors.New("invalid status value")
+	ErrJobNotFound       = errors.New("job not found")
+	ErrDuplicateJob      = errors.New("job with this idempotency key already exists")
+	ErrInvalidStatus     = errors.New("invalid status value")
 	ErrJobNotCancellable = errors.New("job is not in a cancellable state")
+	ErrJobNotReplayable  = errors.New("job is not in a replayable state")
 )
 
 type Status string
@@ -53,6 +54,10 @@ type Job struct {
 	LastError   *string    `json:"lastError"`
 
 	ScheduleID *string `json:"scheduleID,omitempty"`
+
+	// ReplayOf is the ID of the failed job this one was cloned from via the
+	// replay endpoint. Nil for ordinary jobs.
+	ReplayOf *string `json:"replayOf,omitempty"`
 
 	WebhookURL     *string           `json:"webhookURL,omitempty"`
 	WebhookHeaders map[string]string `json:"webhookHeaders,omitempty"`

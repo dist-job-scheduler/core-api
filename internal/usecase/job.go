@@ -92,6 +92,59 @@ func (u *JobUsecase) CreateJob(ctx context.Context, input CreateJobInput) (*doma
 	return created, nil
 }
 
+// Replay clones a permanently-failed job into a fresh pending job and returns
+// it. The original is left untouched as history; the clone carries a new
+// idempotency key and a replay_of pointer back to the source for lineage.
+//
+// Replay clones rather than resetting the original in place: a job's attempt
+// records are keyed UNIQUE(job_id, attempt_num), so re-running the same row
+// would collide on attempt_num. A new job gets a clean attempt sequence and
+// preserves the failed job's audit trail.
+func (u *JobUsecase) Replay(ctx context.Context, jobID, userID string) (*domain.Job, error) {
+	job, err := u.repo.GetByID(ctx, jobID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get job: %w", err)
+	}
+
+	// Only terminal failures are replayable. Pending/running/completed/cancelled
+	// jobs are not dead letters.
+	if job.Status != domain.StatusFailed {
+		return nil, domain.ErrJobNotReplayable
+	}
+
+	// A replay enqueues a new execution — gate it on credits like a fresh create.
+	ok, err := u.credits.HasCredits(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("check credits: %w", err)
+	}
+	if !ok {
+		return nil, domain.ErrInsufficientCredits
+	}
+
+	clone := &domain.Job{
+		UserID:         job.UserID,
+		IdempotencyKey: uuid.New().String(),
+		URL:            job.URL,
+		Method:         job.Method,
+		Headers:        job.Headers,
+		Body:           job.Body,
+		TimeoutSeconds: job.TimeoutSeconds,
+		Status:         domain.StatusPending,
+		ScheduledAt:    time.Now(),
+		MaxRetries:     job.MaxRetries,
+		Backoff:        job.Backoff,
+		WebhookURL:     job.WebhookURL,
+		WebhookHeaders: job.WebhookHeaders,
+		ReplayOf:       &job.ID,
+	}
+
+	created, err := u.repo.Create(ctx, clone)
+	if err != nil {
+		return nil, fmt.Errorf("create replay job: %w", err)
+	}
+	return created, nil
+}
+
 func (u *JobUsecase) CancelJob(ctx context.Context, jobID, userID string) error {
 	if err := u.repo.Cancel(ctx, jobID, userID); err != nil {
 		return fmt.Errorf("cancel job: %w", err)
