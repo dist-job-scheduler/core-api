@@ -97,6 +97,14 @@ var (
 		Buckets:   []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10},
 	})
 
+	// Alert metrics
+
+	AlertDeliveriesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "scheduler",
+		Name:      "alert_deliveries_total",
+		Help:      "Total failure-alert delivery attempts, by channel type and outcome.",
+	}, []string{"type", "outcome"})
+
 	// Buffer drainer metrics
 
 	BufferItemsInFlight = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -154,6 +162,7 @@ func Register() {
 		HTTPRequestsTotal,
 		WebhookDeliveriesTotal,
 		WebhookDuration,
+		AlertDeliveriesTotal,
 		BufferItemsInFlight,
 		BufferItemsCompletedTotal,
 		BufferDrainerCycleDuration,

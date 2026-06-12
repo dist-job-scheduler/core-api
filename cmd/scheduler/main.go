@@ -49,14 +49,17 @@ func main() {
 	creditRepo := postgres.NewCreditRepository(pool)
 
 	signingRepo := postgres.NewSigningSecretRepository(pool)
+	alertRepo := postgres.NewAlertChannelRepository(pool)
 
 	notifier := scheduler.NewWebhookNotifier(logger, signingRepo)
+	alertNotifier := scheduler.NewAlertNotifier(logger, alertRepo)
 
 	worker := scheduler.NewWorker(
 		jobRepo,
 		attemptRepo,
 		creditRepo,
 		notifier,
+		alertNotifier,
 		logger,
 		time.Duration(cfg.PollIntervalSec)*time.Second,
 		cfg.WorkerCount,
@@ -73,7 +76,7 @@ func main() {
 
 	bufferRepo := postgres.NewBufferRepository(pool)
 	drainer := scheduler.NewBufferDrainer(
-		bufferRepo, creditRepo, signingRepo, notifier, logger,
+		bufferRepo, creditRepo, signingRepo, notifier, alertNotifier, logger,
 		time.Duration(cfg.DrainerPollIntervalSec)*time.Second,
 		cfg.DrainerConcurrency,
 	)

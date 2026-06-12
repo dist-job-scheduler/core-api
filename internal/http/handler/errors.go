@@ -1,12 +1,13 @@
 package handler
 
 const (
-	errInternalServer = "Internal server error"
-	errJobNotFound    = "Job not found"
-	errDuplicateJob   = "Job with this idempotency key already exists"
-	errTokenInvalid   = "Token is invalid or expired"
+	errInternalServer    = "Internal server error"
+	errJobNotFound       = "Job not found"
+	errDuplicateJob      = "Job with this idempotency key already exists"
+	errTokenInvalid      = "Token is invalid or expired"
 	errInvalidStatus     = "Invalid status value"
 	errJobNotCancellable = "Job cannot be cancelled in its current state"
+	errJobNotReplayable  = "Only failed jobs can be replayed"
 
 	errScheduleNotFound      = "Schedule not found"
 	errInvalidCronExpr       = "Invalid cron expression"
@@ -20,11 +21,17 @@ const (
 
 	errSigningSecretNotFound = "No signing secret found to rotate"
 
-	errBufferNotFound      = "Buffer not found"
-	errBufferNameConflict  = "Buffer with this name already exists"
-	errBufferAlreadyPaused = "Buffer is already paused"
-	errBufferNotPaused     = "Buffer is not paused"
-	errBufferItemNotFound  = "Buffer item not found"
+	errBufferNotFound          = "Buffer not found"
+	errBufferNameConflict      = "Buffer with this name already exists"
+	errBufferAlreadyPaused     = "Buffer is already paused"
+	errBufferNotPaused         = "Buffer is not paused"
+	errBufferItemNotFound      = "Buffer item not found"
+	errBufferItemNotReplayable = "Only failed buffer items can be replayed"
 
 	errInvalidLimit = "limit must be between 1 and 100"
+
+	errAlertChannelNotFound    = "Alert channel not found"
+	errInvalidAlertChannelType = "Invalid alert channel type"
+
+	errInvalidDays = "days must be a non-negative integer"
 )

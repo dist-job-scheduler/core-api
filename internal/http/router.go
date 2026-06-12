@@ -11,7 +11,7 @@ import (
 	sloggin "github.com/samber/slog-gin"
 )
 
-func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, bufferHandler *handler.BufferHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string, rateLimiter *middleware.RateLimiter) *gin.Engine {
+func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, bufferHandler *handler.BufferHandler, alertHandler *handler.AlertHandler, statsHandler *handler.StatsHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string, rateLimiter *middleware.RateLimiter) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -29,6 +29,7 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	jobs.POST("", jobHandler.Create)
 	jobs.GET("/:id", jobHandler.GetByID)
 	jobs.DELETE("/:id", jobHandler.Cancel)
+	jobs.POST("/:id/replay", jobHandler.Replay)
 	jobs.GET("/:id/attempts", jobHandler.ListAttempts)
 
 	// Protected schedule routes
@@ -46,12 +47,27 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	buffers.POST("", bufferHandler.Create)
 	buffers.GET("", bufferHandler.List)
 	buffers.GET("/:id", bufferHandler.GetByID)
+	buffers.GET("/:id/stats", bufferHandler.Stats)
 	buffers.POST("/:id/pause", bufferHandler.Pause)
 	buffers.POST("/:id/resume", bufferHandler.Resume)
 	buffers.DELETE("/:id", bufferHandler.Delete)
 	buffers.POST("/:id/items", bufferHandler.PushItem)
 	buffers.GET("/:id/items", bufferHandler.ListItems)
 	buffers.GET("/:id/items/:itemId", bufferHandler.GetItem)
+	buffers.POST("/:id/items/:itemId/replay", bufferHandler.ReplayItem)
+
+	// Protected alert channel routes
+	alerts := r.Group("/alerts", authMW, ensureUser, rateLimiter.Middleware())
+	alerts.POST("", alertHandler.Create)
+	alerts.GET("", alertHandler.List)
+	alerts.GET("/:id", alertHandler.GetByID)
+	alerts.PATCH("/:id", alertHandler.Update)
+	alerts.DELETE("/:id", alertHandler.Delete)
+
+	// Protected analytics routes
+	stats := r.Group("/stats", authMW, ensureUser, rateLimiter.Middleware())
+	stats.GET("/usage", statsHandler.Usage)
+	stats.GET("/jobs", statsHandler.Jobs)
 
 	// Protected token routes
 	tokens := r.Group("/tokens", authMW, ensureUser, rateLimiter.Middleware())

@@ -38,6 +38,9 @@ No seat fees. No contracts. Pay only for what you execute.
 | API token auth (`fliq_sk_*`) + Clerk JWT | ✅ Done |
 | Per-user job isolation (ownership enforced at query level) | ✅ Done |
 | Credit system — free tier + pay-as-you-go via Stripe | ✅ Done |
+| Failure alerts — notify Slack/webhook channels on retry exhaustion | ✅ Done |
+| Usage & failure analytics — per-account stats + per-buffer breakdown | ✅ Done |
+| Dead-letter replay — re-run a failed job or buffer item | ✅ Done |
 | CI pipeline (lint, tests, migrations against real Postgres) | ✅ Done |
 
 ---

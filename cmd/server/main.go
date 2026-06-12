@@ -13,12 +13,12 @@ import (
 
 	"github.com/ErlanBelekov/dist-job-scheduler/config"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/health"
-	"github.com/ErlanBelekov/dist-job-scheduler/internal/infrastructure/postgres"
-	ctxlog "github.com/ErlanBelekov/dist-job-scheduler/internal/log"
-	"github.com/ErlanBelekov/dist-job-scheduler/internal/metrics"
 	httptransport "github.com/ErlanBelekov/dist-job-scheduler/internal/http"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/http/handler"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/http/middleware"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/infrastructure/postgres"
+	ctxlog "github.com/ErlanBelekov/dist-job-scheduler/internal/log"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/metrics"
 	stripeclient "github.com/ErlanBelekov/dist-job-scheduler/internal/stripe"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/usecase"
 	"github.com/gin-gonic/gin"
@@ -92,6 +92,16 @@ func main() {
 	bufferUsecase := usecase.NewBufferUsecase(bufferRepo, creditRepo)
 	bufferHandler := handler.NewBufferHandler(bufferUsecase, logger)
 
+	// Alert channels
+	alertRepo := postgres.NewAlertChannelRepository(pool)
+	alertUsecase := usecase.NewAlertUsecase(alertRepo)
+	alertHandler := handler.NewAlertHandler(alertUsecase, logger)
+
+	// Analytics
+	statsRepo := postgres.NewStatsRepository(pool)
+	statsUsecase := usecase.NewStatsUsecase(statsRepo, creditRepo)
+	statsHandler := handler.NewStatsHandler(statsUsecase, logger)
+
 	metrics.Register()
 	checker := health.NewChecker(pool, logger, prometheus.DefaultRegisterer)
 
@@ -100,7 +110,7 @@ func main() {
 
 	srv := http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, bufferHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins, rateLimiter),
+		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, bufferHandler, alertHandler, statsHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins, rateLimiter),
 	}
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)

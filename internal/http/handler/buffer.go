@@ -73,15 +73,16 @@ type pushItemRequest struct {
 }
 
 type bufferItemResponse struct {
-	ID          string                `json:"id"`
-	BufferID    string                `json:"buffer_id"`
+	ID          string                  `json:"id"`
+	BufferID    string                  `json:"buffer_id"`
 	Status      domain.BufferItemStatus `json:"status"`
-	StatusCode  *int                  `json:"status_code,omitempty"`
-	RetryCount  int                   `json:"retry_count"`
-	MaxRetries  int                   `json:"max_retries"`
-	LastError   *string               `json:"last_error,omitempty"`
-	CreatedAt   time.Time             `json:"created_at"`
-	CompletedAt *time.Time            `json:"completed_at,omitempty"`
+	StatusCode  *int                    `json:"status_code,omitempty"`
+	RetryCount  int                     `json:"retry_count"`
+	MaxRetries  int                     `json:"max_retries"`
+	LastError   *string                 `json:"last_error,omitempty"`
+	ReplayOf    *string                 `json:"replay_of,omitempty"`
+	CreatedAt   time.Time               `json:"created_at"`
+	CompletedAt *time.Time              `json:"completed_at,omitempty"`
 }
 
 func toBufferItemResponse(item *domain.BufferItem) bufferItemResponse {
@@ -93,6 +94,7 @@ func toBufferItemResponse(item *domain.BufferItem) bufferItemResponse {
 		RetryCount:  item.RetryCount,
 		MaxRetries:  item.MaxRetries,
 		LastError:   item.LastError,
+		ReplayOf:    item.ReplayOf,
 		CreatedAt:   item.CreatedAt,
 		CompletedAt: item.CompletedAt,
 	}
@@ -182,6 +184,39 @@ func (h *BufferHandler) GetByID(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, toBufferResponse(b))
+}
+
+type bufferStatsResponse struct {
+	Pending     int64   `json:"pending"`
+	Running     int64   `json:"running"`
+	Completed   int64   `json:"completed"`
+	Failed      int64   `json:"failed"`
+	Total       int64   `json:"total"`
+	SuccessRate float64 `json:"success_rate"`
+}
+
+func (h *BufferHandler) Stats(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	s, err := h.uc.GetBufferStats(ctx.Request.Context(), id, ctx.GetString("userID"))
+	if err != nil {
+		if errors.Is(err, domain.ErrBufferNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": errBufferNotFound})
+			return
+		}
+		h.logger.ErrorContext(ctx.Request.Context(), "buffer stats", "buffer_id", id, "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, bufferStatsResponse{
+		Pending:     s.Pending,
+		Running:     s.Running,
+		Completed:   s.Completed,
+		Failed:      s.Failed,
+		Total:       s.Total,
+		SuccessRate: s.SuccessRate,
+	})
 }
 
 func (h *BufferHandler) Pause(ctx *gin.Context) {
@@ -309,6 +344,33 @@ func (h *BufferHandler) ListItems(ctx *gin.Context) {
 		"items":       items,
 		"next_cursor": result.NextCursor,
 	})
+}
+
+// ReplayItem clones a permanently-failed buffer item into a fresh pending item
+// appended to the tail of the buffer.
+func (h *BufferHandler) ReplayItem(ctx *gin.Context) {
+	bufferID := ctx.Param("id")
+	itemID := ctx.Param("itemId")
+
+	item, err := h.uc.ReplayItem(ctx.Request.Context(), itemID, bufferID, ctx.GetString("userID"))
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrBufferNotFound):
+			ctx.JSON(http.StatusNotFound, gin.H{"error": errBufferNotFound})
+		case errors.Is(err, domain.ErrBufferItemNotFound):
+			ctx.JSON(http.StatusNotFound, gin.H{"error": errBufferItemNotFound})
+		case errors.Is(err, domain.ErrBufferItemNotReplayable):
+			ctx.JSON(http.StatusConflict, gin.H{"error": errBufferItemNotReplayable})
+		case errors.Is(err, domain.ErrInsufficientCredits):
+			ctx.JSON(http.StatusPaymentRequired, gin.H{"error": errInsufficientCredits})
+		default:
+			h.logger.ErrorContext(ctx.Request.Context(), "replay buffer item", "buffer_id", bufferID, "item_id", itemID, "error", err)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, toBufferItemResponse(item))
 }
 
 func (h *BufferHandler) GetItem(ctx *gin.Context) {
