@@ -20,7 +20,7 @@ services:
       context: .
       dockerfile: Dockerfile.migrate
     environment:
-      DATABASE_URL: postgres://scheduler:scheduler@postgres:5432/scheduler?sslmode=disable
+      GOOSE_DBSTRING: postgres://scheduler:scheduler@postgres:5432/scheduler?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,11 +35,16 @@ services:
       ENV: local
       PORT: 8080
       DATABASE_URL: postgres://scheduler:scheduler@postgres:5432/scheduler?sslmode=disable
+      # Self-host without Clerk: HS256 local auth. Override with your own secret
+      # (min 32 chars). Leave CLERK_JWKS_URL unset to keep this HS256 path.
+      JWT_SECRET: "${JWT_SECRET:-dev-only-change-me-0123456789abcdef0123456789}"
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     profiles: [app]
 
   scheduler:
@@ -54,6 +59,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     profiles: [app]
 
 volumes:
