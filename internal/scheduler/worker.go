@@ -25,6 +25,7 @@ type Worker struct {
 	executor       *Executor
 	notifier       *WebhookNotifier
 	alerts         *AlertNotifier
+	lowBalance     LowBalanceConfig
 	logger         *slog.Logger
 	pollInterval   time.Duration
 	concurrency    int
@@ -37,6 +38,7 @@ func NewWorker(
 	credits repository.CreditRepository,
 	notifier *WebhookNotifier,
 	alerts *AlertNotifier,
+	lowBalance LowBalanceConfig,
 	logger *slog.Logger,
 	pollInterval time.Duration,
 	concurrency int,
@@ -53,6 +55,7 @@ func NewWorker(
 		executor:       NewExecutor(logger),
 		notifier:       notifier,
 		alerts:         alerts,
+		lowBalance:     lowBalance,
 		logger:         logger.With("worker_id", id),
 		pollInterval:   pollInterval,
 		concurrency:    concurrency,
@@ -187,9 +190,12 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 	// Placed here (after HTTP call, before outcome branch) so we always charge
 	// for work done. A crash between Run() and here means the job is re-attempted
 	// by the reaper; the user gets one free attempt in that rare case — acceptable.
-	if deductErr := w.credits.Deduct(ctx, job.UserID, job.ID); deductErr != nil {
+	crossing, deductErr := w.credits.Deduct(ctx, job.UserID, job.ID, w.lowBalance.Threshold)
+	if deductErr != nil {
 		w.logger.WarnContext(ctx, "credit deduction failed", "job_id", job.ID, "error", deductErr)
 		// Non-fatal: job outcome is not affected.
+	} else {
+		fireCreditLow(ctx, w.alerts, w.lowBalance, job.UserID, crossing)
 	}
 
 	if result.Err == nil && result.StatusCode == http.StatusOK {

@@ -50,6 +50,20 @@ type Config struct {
 	// Billing URLs for Stripe Checkout redirect.
 	BillingSuccessURL string `env:"BILLING_SUCCESS_URL" envDefault:"http://localhost:3000/app/billing/success"`
 	BillingCancelURL  string `env:"BILLING_CANCEL_URL" envDefault:"http://localhost:3000/app/billing/cancel"`
+
+	// LowBalanceThreshold is the credit floor that triggers a proactive
+	// credit_low alert when a deduction crosses below it. 0 disables the warning.
+	LowBalanceThreshold int64 `env:"LOW_BALANCE_THRESHOLD" envDefault:"10000"`
+
+	// Email alerts (Resend). When ResendAPIKey is empty the mailer is a safe
+	// no-op: email channels can still be created but nothing is sent, exactly
+	// like a nil AlertNotifier. Set both to deliver live.
+	ResendAPIKey   string `env:"RESEND_API_KEY"`
+	AlertEmailFrom string `env:"ALERT_EMAIL_FROM" envDefault:"alerts@fliq.sh"`
+
+	// AppBaseURL is the public base URL used to build email-verification confirm
+	// links (e.g. https://api.fliq.sh). Falls back to localhost for local dev.
+	AppBaseURL string `env:"APP_BASE_URL" envDefault:"http://localhost:8080"`
 }
 
 func Load() (*Config, error) {

@@ -26,6 +26,7 @@ type BufferDrainer struct {
 	executor       *Executor
 	notifier       *WebhookNotifier
 	alerts         *AlertNotifier
+	lowBalance     LowBalanceConfig
 	logger         *slog.Logger
 	pollInterval   time.Duration
 	concurrency    int
@@ -38,6 +39,7 @@ func NewBufferDrainer(
 	signingSecrets repository.SigningSecretRepository,
 	notifier *WebhookNotifier,
 	alerts *AlertNotifier,
+	lowBalance LowBalanceConfig,
 	logger *slog.Logger,
 	pollInterval time.Duration,
 	concurrency int,
@@ -52,6 +54,7 @@ func NewBufferDrainer(
 		executor:       NewExecutor(logger),
 		notifier:       notifier,
 		alerts:         alerts,
+		lowBalance:     lowBalance,
 		logger:         logger.With("component", "buffer_drainer", "worker_id", id),
 		pollInterval:   pollInterval,
 		concurrency:    concurrency,
@@ -187,8 +190,11 @@ func (d *BufferDrainer) runItem(ctx context.Context, buf *domain.Buffer, item *d
 	result := d.executor.Run(ctx, job, signingSecret)
 
 	// Deduct credit
-	if deductErr := d.credits.DeductForBufferItem(ctx, item.UserID, item.ID); deductErr != nil {
+	crossing, deductErr := d.credits.DeductForBufferItem(ctx, item.UserID, item.ID, d.lowBalance.Threshold)
+	if deductErr != nil {
 		d.logger.WarnContext(ctx, "credit deduction failed", "item_id", item.ID, "error", deductErr)
+	} else {
+		fireCreditLow(ctx, d.alerts, d.lowBalance, item.UserID, crossing)
 	}
 
 	// 429 — rate limited by target API

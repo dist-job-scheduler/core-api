@@ -2,11 +2,40 @@ package testutil
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/mailer"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/repository"
 )
+
+// ---------- FakeMailer ----------
+
+// FakeMailer is an in-memory mailer.Provider that records every message it is
+// asked to send. Safe for concurrent use so scheduler goroutines can hit it.
+type FakeMailer struct {
+	mu   sync.Mutex
+	Sent []mailer.Email
+	// Err, if set, is returned from Send (and the message is still recorded).
+	Err error
+}
+
+func (m *FakeMailer) Send(_ context.Context, msg mailer.Email) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Sent = append(m.Sent, msg)
+	return m.Err
+}
+
+// Messages returns a copy of the recorded messages.
+func (m *FakeMailer) Messages() []mailer.Email {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]mailer.Email, len(m.Sent))
+	copy(out, m.Sent)
+	return out
+}
 
 // ---------- MockJobRepository ----------
 
@@ -147,8 +176,8 @@ type MockCreditRepository struct {
 	EnsureExistsFn        func(ctx context.Context, userID string) error
 	GetBalanceFn          func(ctx context.Context, userID string) (*domain.CreditBalance, error)
 	HasCreditsFn          func(ctx context.Context, userID string) (bool, error)
-	DeductFn              func(ctx context.Context, userID, jobID string) error
-	DeductForBufferItemFn func(ctx context.Context, userID, bufferItemID string) error
+	DeductFn              func(ctx context.Context, userID, jobID string, threshold int64) (*repository.LowBalanceCrossing, error)
+	DeductForBufferItemFn func(ctx context.Context, userID, bufferItemID string, threshold int64) (*repository.LowBalanceCrossing, error)
 	TopUpFn               func(ctx context.Context, userID string, amount int64, stripePaymentIntentID string) error
 	UpdatePlanFn          func(ctx context.Context, userID string, plan domain.Plan) error
 	ListTransactionsFn    func(ctx context.Context, userID string, cursor string, limit int) ([]domain.CreditTransaction, string, error)
@@ -175,18 +204,18 @@ func (m *MockCreditRepository) HasCredits(ctx context.Context, userID string) (b
 	return true, nil
 }
 
-func (m *MockCreditRepository) Deduct(ctx context.Context, userID, jobID string) error {
+func (m *MockCreditRepository) Deduct(ctx context.Context, userID, jobID string, threshold int64) (*repository.LowBalanceCrossing, error) {
 	if m.DeductFn != nil {
-		return m.DeductFn(ctx, userID, jobID)
+		return m.DeductFn(ctx, userID, jobID, threshold)
 	}
-	return nil
+	return nil, nil
 }
 
-func (m *MockCreditRepository) DeductForBufferItem(ctx context.Context, userID, bufferItemID string) error {
+func (m *MockCreditRepository) DeductForBufferItem(ctx context.Context, userID, bufferItemID string, threshold int64) (*repository.LowBalanceCrossing, error) {
 	if m.DeductForBufferItemFn != nil {
-		return m.DeductForBufferItemFn(ctx, userID, bufferItemID)
+		return m.DeductForBufferItemFn(ctx, userID, bufferItemID, threshold)
 	}
-	return nil
+	return nil, nil
 }
 
 func (m *MockCreditRepository) TopUp(ctx context.Context, userID string, amount int64, stripePaymentIntentID string) error {
@@ -355,12 +384,13 @@ func (m *MockStripeCustomerRepository) Save(ctx context.Context, userID, stripeC
 // ---------- MockAlertChannelRepository ----------
 
 type MockAlertChannelRepository struct {
-	CreateFn      func(ctx context.Context, ch *domain.AlertChannel) (*domain.AlertChannel, error)
-	GetByIDFn     func(ctx context.Context, id, userID string) (*domain.AlertChannel, error)
-	ListFn        func(ctx context.Context, userID string) ([]*domain.AlertChannel, error)
-	SetEnabledFn  func(ctx context.Context, id, userID string, enabled bool) error
-	DeleteFn      func(ctx context.Context, id, userID string) error
-	ListEnabledFn func(ctx context.Context, userID string) ([]*domain.AlertChannel, error)
+	CreateFn       func(ctx context.Context, ch *domain.AlertChannel) (*domain.AlertChannel, error)
+	GetByIDFn      func(ctx context.Context, id, userID string) (*domain.AlertChannel, error)
+	ListFn         func(ctx context.Context, userID string) ([]*domain.AlertChannel, error)
+	SetEnabledFn   func(ctx context.Context, id, userID string, enabled bool) error
+	DeleteFn       func(ctx context.Context, id, userID string) error
+	MarkVerifiedFn func(ctx context.Context, id string) error
+	ListEnabledFn  func(ctx context.Context, userID string) ([]*domain.AlertChannel, error)
 }
 
 func (m *MockAlertChannelRepository) Create(ctx context.Context, ch *domain.AlertChannel) (*domain.AlertChannel, error) {
@@ -397,6 +427,13 @@ func (m *MockAlertChannelRepository) SetEnabled(ctx context.Context, id, userID 
 func (m *MockAlertChannelRepository) Delete(ctx context.Context, id, userID string) error {
 	if m.DeleteFn != nil {
 		return m.DeleteFn(ctx, id, userID)
+	}
+	return nil
+}
+
+func (m *MockAlertChannelRepository) MarkVerified(ctx context.Context, id string) error {
+	if m.MarkVerifiedFn != nil {
+		return m.MarkVerifiedFn(ctx, id)
 	}
 	return nil
 }
