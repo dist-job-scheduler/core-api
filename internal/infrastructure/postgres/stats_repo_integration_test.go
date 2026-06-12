@@ -113,14 +113,14 @@ func TestStatsRepo_UsageSeries(t *testing.T) {
 	// 2 job executions + 1 buffer execution, all today.
 	job1, _ := postgres.NewJobRepository(pool).Create(ctx, testutil.NewJob(testutil.WithUserID(userID)))
 	job2, _ := postgres.NewJobRepository(pool).Create(ctx, testutil.NewJob(testutil.WithUserID(userID)))
-	if err := creditRepo.Deduct(ctx, userID, job1.ID); err != nil {
+	if _, err := creditRepo.Deduct(ctx, userID, job1.ID, 0); err != nil {
 		t.Fatalf("deduct job1: %v", err)
 	}
-	if err := creditRepo.Deduct(ctx, userID, job2.ID); err != nil {
+	if _, err := creditRepo.Deduct(ctx, userID, job2.ID, 0); err != nil {
 		t.Fatalf("deduct job2: %v", err)
 	}
 	itemID := seedBufferItem(t, pool, userID)
-	if err := creditRepo.DeductForBufferItem(ctx, userID, itemID); err != nil {
+	if _, err := creditRepo.DeductForBufferItem(ctx, userID, itemID, 0); err != nil {
 		t.Fatalf("deduct buffer item: %v", err)
 	}
 

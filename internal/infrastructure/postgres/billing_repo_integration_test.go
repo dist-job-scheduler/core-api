@@ -82,7 +82,7 @@ func TestBillingRepo_Deduct(t *testing.T) {
 	}
 
 	balanceBefore, _ := repo.GetBalance(ctx, userID)
-	if err := repo.Deduct(ctx, userID, created.ID); err != nil {
+	if _, err := repo.Deduct(ctx, userID, created.ID, 0); err != nil {
 		t.Fatalf("deduct: %v", err)
 	}
 	balanceAfter, _ := repo.GetBalance(ctx, userID)
@@ -149,7 +149,7 @@ func TestBillingRepo_ListTransactions_Pagination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create job %d: %v", i, err)
 		}
-		if err := repo.Deduct(ctx, userID, created.ID); err != nil {
+		if _, err := repo.Deduct(ctx, userID, created.ID, 0); err != nil {
 			t.Fatalf("deduct %d: %v", i, err)
 		}
 	}
