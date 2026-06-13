@@ -126,11 +126,15 @@ tuples):
 DROP TABLE job_attempts_2026_03;   -- e.g. keep the last N months
 ```
 
-**Partition rotation (operational follow-up).** Monthly partitions are
-pre-created through 2027-12 plus a `DEFAULT`. Before then, a periodic job must
-create next month's partition and drop expired ones — either a small scheduler
-task or `pg_partman`. Until automated, the `DEFAULT` partition absorbs overflow
-(keep it empty by pre-creating ahead so future `CREATE PARTITION` stays fast).
+**Partition rotation (automated).** The scheduler runs a `PartitionMaintainer`
+(`internal/scheduler/partition.go`) that, every `PARTITION_MAINTAIN_INTERVAL_SEC`
+(default 6h), ensures the current month + `PARTITION_MONTHS_AHEAD` (default 3)
+partitions exist. **Creation is always on** so the `DEFAULT` partition stays
+empty and there's no future cliff. **Dropping is opt-in:** with
+`JOB_ATTEMPT_RETENTION_MONTHS = 0` (default) nothing is ever dropped — attempts
+are billing records, so retention is a deliberate policy. Set it > 0 to have the
+maintainer drop partitions older than that many months (logged at WARN). The
+manual `DROP TABLE job_attempts_YYYY_MM` runbook above still works for one-offs.
 
 **Operational note.** The conversion copies all rows under a lock for the copy's
 duration. `job_attempts` is small today; on a large table, run during a
