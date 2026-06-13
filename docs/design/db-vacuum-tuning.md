@@ -68,7 +68,16 @@ one-time `pg_repack` (online, no long lock) on `jobs`, `buffer_items`,
 `job_attempts` after deploy to compact what's already there. `VACUUM FULL` also
 works but takes an exclusive lock — avoid on the live scheduler.
 
-## Phase 2 — heartbeat sidecar (proposed, not yet implemented)
+## Phase 2 — heartbeat sidecar (implemented for `jobs`, migration `20260614000001`)
+
+Status: **done for the jobs scheduler path.** `buffer_items` has the identical
+shape (`idx_buffer_items_stale`, full-row heartbeat) and gets the same treatment
+in a follow-up PR (validated by the `crash.js` buffer chaos test).
+
+Measured on the migrated schema (50 running jobs × 360 beats/hr, autovacuum off
+to show raw churn): the old full-row heartbeat left **15.4k dead tuples / ~21 MB**
+of churn on `jobs`; the sidecar moves that to a **~1.5 MB** table (mostly HOT) and
+`jobs` now takes **zero** heartbeat writes.
 
 Move the volatile heartbeat out of the heavy row:
 

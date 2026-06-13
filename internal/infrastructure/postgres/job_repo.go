@@ -80,26 +80,40 @@ func (r *JobRepository) GetByID(ctx context.Context, id, userID string) (*domain
 
 func (r *JobRepository) Claim(ctx context.Context, workerID string, limit int) ([]*domain.Job, error) {
 	// FOR UPDATE SKIP LOCKED prevents double-execution across workers.
+	// The `hb` CTE seeds the heartbeat sidecar atomically with the claim so a
+	// freshly-running job always has a heartbeat row (the reaper relies on it).
 	query := `
-		UPDATE jobs
-		SET    status       = 'running',
-		       claimed_at   = NOW(),
-		       claimed_by   = $1,
-		       heartbeat_at = NOW(),
-		       updated_at   = NOW()
-		WHERE id IN (
-			SELECT id FROM jobs
-			WHERE  status       = 'pending'
-			  AND  scheduled_at <= NOW()
-			ORDER BY scheduled_at ASC
-			LIMIT $2
-			FOR UPDATE SKIP LOCKED
+		WITH claimed AS (
+			UPDATE jobs
+			SET    status       = 'running',
+			       claimed_at   = NOW(),
+			       claimed_by   = $1,
+			       heartbeat_at = NOW(),
+			       updated_at   = NOW()
+			WHERE id IN (
+				SELECT id FROM jobs
+				WHERE  status       = 'pending'
+				  AND  scheduled_at <= NOW()
+				ORDER BY scheduled_at ASC
+				LIMIT $2
+				FOR UPDATE SKIP LOCKED
+			)
+			RETURNING id, user_id, idempotency_key, url, method, headers, body,
+			          timeout_seconds, status, scheduled_at, retry_count,
+			          max_retries, backoff, claimed_at, claimed_by,
+			          heartbeat_at, completed_at, last_error, created_at, updated_at, schedule_id,
+			          webhook_url, webhook_headers, replay_of
+		), hb AS (
+			INSERT INTO job_heartbeats (job_id, heartbeat_at)
+			SELECT id, NOW() FROM claimed
+			ON CONFLICT (job_id) DO UPDATE SET heartbeat_at = EXCLUDED.heartbeat_at
 		)
-		RETURNING id, user_id, idempotency_key, url, method, headers, body,
-		          timeout_seconds, status, scheduled_at, retry_count,
-		          max_retries, backoff, claimed_at, claimed_by,
-		          heartbeat_at, completed_at, last_error, created_at, updated_at, schedule_id,
-		          webhook_url, webhook_headers, replay_of`
+		SELECT id, user_id, idempotency_key, url, method, headers, body,
+		       timeout_seconds, status, scheduled_at, retry_count,
+		       max_retries, backoff, claimed_at, claimed_by,
+		       heartbeat_at, completed_at, last_error, created_at, updated_at, schedule_id,
+		       webhook_url, webhook_headers, replay_of
+		FROM claimed`
 
 	rows, err := r.pool.Query(ctx, query, workerID, limit)
 	if err != nil {
@@ -119,80 +133,113 @@ func (r *JobRepository) Claim(ctx context.Context, workerID string, limit int) (
 }
 
 func (r *JobRepository) UpdateHeartbeat(ctx context.Context, jobID string) error {
+	// Writes only the tiny sidecar row (a HOT update — no index churn, no rewrite
+	// of the heavy jobs row). Guarded so we never heartbeat a job that has left
+	// 'running'; upsert so a missing row self-heals. See migration 20260614000001.
 	_, err := r.pool.Exec(ctx,
-		`UPDATE jobs SET heartbeat_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND status = 'running'`, jobID)
+		`INSERT INTO job_heartbeats (job_id, heartbeat_at)
+		 SELECT $1, NOW()
+		 WHERE EXISTS (SELECT 1 FROM jobs WHERE id = $1 AND status = 'running')
+		 ON CONFLICT (job_id) DO UPDATE SET heartbeat_at = EXCLUDED.heartbeat_at`, jobID)
 	return err
 }
 
 func (r *JobRepository) Complete(ctx context.Context, jobID string) error {
+	// Leaving 'running' → drop the heartbeat sidecar row so it stays tiny.
 	_, err := r.pool.Exec(ctx,
-		`UPDATE jobs SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-		WHERE id = $1`, jobID)
+		`WITH done AS (
+			UPDATE jobs SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+			WHERE id = $1 RETURNING id
+		 )
+		 DELETE FROM job_heartbeats WHERE job_id IN (SELECT id FROM done)`, jobID)
 	return err
 }
 
 func (r *JobRepository) Fail(ctx context.Context, jobID string, lastError string) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE jobs SET status = 'failed', last_error = $2, updated_at = NOW()
-		WHERE id = $1`, jobID, lastError)
+		`WITH done AS (
+			UPDATE jobs SET status = 'failed', last_error = $2, updated_at = NOW()
+			WHERE id = $1 RETURNING id
+		 )
+		 DELETE FROM job_heartbeats WHERE job_id IN (SELECT id FROM done)`, jobID, lastError)
 	return err
 }
 
 func (r *JobRepository) Reschedule(ctx context.Context, jobID string, lastError string, retryAt time.Time) error {
 	// make sure that retry_count is not over-incremented due to multiple workers trying to re-schedule same jobs
 	_, err := r.pool.Exec(ctx,
-		`UPDATE jobs
-		SET    status       = 'pending',
-		       retry_count  = retry_count + 1,
-		       last_error   = $2,
-		       scheduled_at = $3,
-		       claimed_at   = NULL,
-		       claimed_by   = NULL,
-		       heartbeat_at = NULL,
-		       updated_at   = NOW()
-		WHERE id = $1`, jobID, lastError, retryAt)
+		`WITH done AS (
+			UPDATE jobs
+			SET    status       = 'pending',
+			       retry_count  = retry_count + 1,
+			       last_error   = $2,
+			       scheduled_at = $3,
+			       claimed_at   = NULL,
+			       claimed_by   = NULL,
+			       heartbeat_at = NULL,
+			       updated_at   = NOW()
+			WHERE id = $1 RETURNING id
+		 )
+		 DELETE FROM job_heartbeats WHERE job_id IN (SELECT id FROM done)`, jobID, lastError, retryAt)
 	return err
 }
 
 func (r *JobRepository) RescheduleStale(ctx context.Context, staleCutoff time.Time, limit int) (int, error) {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE jobs
-		SET    status       = 'pending',
-		       retry_count  = retry_count + 1,
-		       last_error   = 'worker timeout',
-		       claimed_at   = NULL,
-		       claimed_by   = NULL,
-		       heartbeat_at = NULL,
-		       updated_at   = NOW()
-		WHERE id IN (
-			SELECT id FROM jobs
-			WHERE  status       = 'running'
-			  AND  heartbeat_at < $1
-			  AND  retry_count  < max_retries
-			ORDER BY heartbeat_at ASC
+	// Staleness comes from the sidecar. A running job whose heartbeat row is
+	// missing (h.heartbeat_at IS NULL) is treated as stale too — defensive.
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		WITH stale AS (
+			SELECT j.id FROM jobs j
+			LEFT JOIN job_heartbeats h ON h.job_id = j.id
+			WHERE  j.status      = 'running'
+			  AND  (h.heartbeat_at IS NULL OR h.heartbeat_at < $1)
+			  AND  j.retry_count  < j.max_retries
+			ORDER BY h.heartbeat_at ASC NULLS FIRST
 			LIMIT $2
-			FOR UPDATE SKIP LOCKED
-		)`, staleCutoff, limit)
-	return int(tag.RowsAffected()), err
+			FOR UPDATE OF j SKIP LOCKED
+		), upd AS (
+			UPDATE jobs
+			SET    status       = 'pending',
+			       retry_count  = retry_count + 1,
+			       last_error   = 'worker timeout',
+			       claimed_at   = NULL,
+			       claimed_by   = NULL,
+			       heartbeat_at = NULL,
+			       updated_at   = NOW()
+			WHERE id IN (SELECT id FROM stale)
+			RETURNING id
+		), del AS (
+			DELETE FROM job_heartbeats WHERE job_id IN (SELECT id FROM upd)
+		)
+		SELECT count(*) FROM upd`, staleCutoff, limit).Scan(&n)
+	return n, err
 }
 
 func (r *JobRepository) FailStale(ctx context.Context, staleCutoff time.Time, limit int) (int, error) {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE jobs
-		SET    status      = 'failed',
-		       last_error  = 'worker timeout: max retries exceeded',
-		       updated_at  = NOW()
-		WHERE id IN (
-			SELECT id FROM jobs
-			WHERE  status       = 'running'
-			  AND  heartbeat_at < $1
-			  AND  retry_count  >= max_retries
-			ORDER BY heartbeat_at ASC
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		WITH stale AS (
+			SELECT j.id FROM jobs j
+			LEFT JOIN job_heartbeats h ON h.job_id = j.id
+			WHERE  j.status      = 'running'
+			  AND  (h.heartbeat_at IS NULL OR h.heartbeat_at < $1)
+			  AND  j.retry_count  >= j.max_retries
+			ORDER BY h.heartbeat_at ASC NULLS FIRST
 			LIMIT $2
-			FOR UPDATE SKIP LOCKED
-		)`, staleCutoff, limit)
-	return int(tag.RowsAffected()), err
+			FOR UPDATE OF j SKIP LOCKED
+		), upd AS (
+			UPDATE jobs
+			SET    status      = 'failed',
+			       last_error  = 'worker timeout: max retries exceeded',
+			       updated_at  = NOW()
+			WHERE id IN (SELECT id FROM stale)
+			RETURNING id
+		), del AS (
+			DELETE FROM job_heartbeats WHERE job_id IN (SELECT id FROM upd)
+		)
+		SELECT count(*) FROM upd`, staleCutoff, limit).Scan(&n)
+	return n, err
 }
 
 func (r *JobRepository) Cancel(ctx context.Context, jobID, userID string) error {
