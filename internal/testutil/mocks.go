@@ -144,7 +144,7 @@ func (m *MockJobRepository) ListByScheduleID(ctx context.Context, scheduleID str
 
 type MockAttemptRepository struct {
 	CreateAttemptFn   func(ctx context.Context, attempt *domain.JobAttempt) (*domain.JobAttempt, error)
-	CompleteAttemptFn func(ctx context.Context, id string, statusCode *int, errMsg *string, durationMS int64) error
+	CompleteAttemptFn func(ctx context.Context, id string, startedAt time.Time, statusCode *int, errMsg *string, durationMS int64) error
 	ListByJobIDFn     func(ctx context.Context, jobID string) ([]*domain.JobAttempt, error)
 }
 
@@ -156,9 +156,9 @@ func (m *MockAttemptRepository) CreateAttempt(ctx context.Context, attempt *doma
 	return attempt, nil
 }
 
-func (m *MockAttemptRepository) CompleteAttempt(ctx context.Context, id string, statusCode *int, errMsg *string, durationMS int64) error {
+func (m *MockAttemptRepository) CompleteAttempt(ctx context.Context, id string, startedAt time.Time, statusCode *int, errMsg *string, durationMS int64) error {
 	if m.CompleteAttemptFn != nil {
-		return m.CompleteAttemptFn(ctx, id, statusCode, errMsg, durationMS)
+		return m.CompleteAttemptFn(ctx, id, startedAt, statusCode, errMsg, durationMS)
 	}
 	return nil
 }
