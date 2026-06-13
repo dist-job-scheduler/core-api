@@ -32,7 +32,7 @@ func seedCompletedAttempt(t *testing.T, jobRepo *postgres.JobRepository, attempt
 		t.Fatalf("seed attempt: %v", err)
 	}
 	sc := statusCode
-	if err := attemptRepo.CompleteAttempt(ctx, attempt.ID, &sc, errMsg, durationMS); err != nil {
+	if err := attemptRepo.CompleteAttempt(ctx, attempt.ID, attempt.StartedAt, &sc, errMsg, durationMS); err != nil {
 		t.Fatalf("complete attempt: %v", err)
 	}
 }
