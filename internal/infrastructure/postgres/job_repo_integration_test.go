@@ -312,3 +312,106 @@ func TestJobRepo_ListJobs(t *testing.T) {
 		t.Fatalf("filtered got %d jobs, want 3", len(jobs))
 	}
 }
+
+func TestJobRepo_ListJobs_SearchFilters(t *testing.T) {
+	repo, userID := setupJobRepo(t)
+	ctx := context.Background()
+
+	base := time.Now().Truncate(time.Second)
+	// Three jobs with distinct urls, methods, and scheduled_at.
+	seed := []struct {
+		url    string
+		method string
+		at     time.Time
+	}{
+		{"https://api.example.com/orders", "POST", base.Add(1 * time.Hour)},
+		{"https://api.example.com/users", "GET", base.Add(2 * time.Hour)},
+		{"https://hooks.other.io/notify", "POST", base.Add(3 * time.Hour)},
+	}
+	for i, s := range seed {
+		job := testutil.NewJob(
+			testutil.WithUserID(userID),
+			testutil.WithURL(s.url),
+			testutil.WithMethod(s.method),
+			testutil.WithScheduledAt(s.at),
+		)
+		if _, err := repo.Create(ctx, job); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+	}
+
+	// URL substring search (case-insensitive) matches the two example.com jobs.
+	jobs, err := repo.ListJobs(ctx, repository.ListJobsInput{UserID: userID, URLSearch: "EXAMPLE.com", Limit: 10})
+	if err != nil {
+		t.Fatalf("list url search: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("url search got %d jobs, want 2", len(jobs))
+	}
+
+	// Method filter matches the two POST jobs.
+	jobs, err = repo.ListJobs(ctx, repository.ListJobsInput{UserID: userID, Method: "POST", Limit: 10})
+	if err != nil {
+		t.Fatalf("list method: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("method filter got %d jobs, want 2", len(jobs))
+	}
+
+	// Combined method + URL search narrows to the single orders job.
+	jobs, err = repo.ListJobs(ctx, repository.ListJobsInput{UserID: userID, Method: "POST", URLSearch: "orders", Limit: 10})
+	if err != nil {
+		t.Fatalf("list method+url: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("method+url got %d jobs, want 1", len(jobs))
+	}
+	if jobs[0].URL != "https://api.example.com/orders" {
+		t.Fatalf("got url %s, want orders job", jobs[0].URL)
+	}
+
+	// Time range: only jobs scheduled within (base+90m, base+150m] → the users job.
+	after := base.Add(90 * time.Minute)
+	before := base.Add(150 * time.Minute)
+	jobs, err = repo.ListJobs(ctx, repository.ListJobsInput{
+		UserID:          userID,
+		ScheduledAfter:  &after,
+		ScheduledBefore: &before,
+		Limit:           10,
+	})
+	if err != nil {
+		t.Fatalf("list time range: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("time range got %d jobs, want 1", len(jobs))
+	}
+	if jobs[0].URL != "https://api.example.com/users" {
+		t.Fatalf("got url %s, want users job", jobs[0].URL)
+	}
+}
+
+// TestJobRepo_ListJobs_SearchEscapesWildcards ensures a search term containing
+// LIKE metacharacters is matched literally rather than as a wildcard.
+func TestJobRepo_ListJobs_SearchEscapesWildcards(t *testing.T) {
+	repo, userID := setupJobRepo(t)
+	ctx := context.Background()
+
+	for _, u := range []string{"https://x.io/a%b", "https://x.io/azzb"} {
+		job := testutil.NewJob(testutil.WithUserID(userID), testutil.WithURL(u))
+		if _, err := repo.Create(ctx, job); err != nil {
+			t.Fatalf("create %s: %v", u, err)
+		}
+	}
+
+	// "a%b" must match only the literal "a%b" url, not "azzb".
+	jobs, err := repo.ListJobs(ctx, repository.ListJobsInput{UserID: userID, URLSearch: "a%b", Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("escaped search got %d jobs, want 1", len(jobs))
+	}
+	if jobs[0].URL != "https://x.io/a%b" {
+		t.Fatalf("got url %s, want literal a%%b job", jobs[0].URL)
+	}
+}

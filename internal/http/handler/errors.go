@@ -6,6 +6,9 @@ const (
 	errDuplicateJob      = "Job with this idempotency key already exists"
 	errTokenInvalid      = "Token is invalid or expired"
 	errInvalidStatus     = "Invalid status value"
+	errInvalidMethod     = "method must be one of: GET, POST, PUT, PATCH, DELETE"
+	errInvalidSearch     = "q must be at most 512 characters"
+	errInvalidTimeFilter = "scheduled_after and scheduled_before must be RFC3339 timestamps"
 	errJobNotCancellable = "Job cannot be cancelled in its current state"
 	errJobNotReplayable  = "Only failed jobs can be replayed"
 

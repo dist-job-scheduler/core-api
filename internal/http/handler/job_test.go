@@ -234,6 +234,65 @@ func TestListJobs_InvalidStatus(t *testing.T) {
 	}
 }
 
+// TestListJobs_SearchFiltersForwarded verifies that the q / method /
+// scheduled_after / scheduled_before query params are parsed and forwarded to
+// the repository as the corresponding ListJobsInput fields.
+func TestListJobs_SearchFiltersForwarded(t *testing.T) {
+	var got repository.ListJobsInput
+	jobRepo := &testutil.MockJobRepository{
+		ListJobsFn: func(_ context.Context, in repository.ListJobsInput) ([]*domain.Job, error) {
+			got = in
+			return nil, nil
+		},
+	}
+	r := setupJobRouter(jobRepo, &testutil.MockAttemptRepository{}, &testutil.MockCreditRepository{})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet,
+		"/jobs?q=example.com&method=post&scheduled_after=2026-01-01T00:00:00Z&scheduled_before=2026-12-31T00:00:00Z", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if got.URLSearch != "example.com" {
+		t.Errorf("URLSearch = %q, want %q", got.URLSearch, "example.com")
+	}
+	if got.Method != "POST" { // normalized to upper-case
+		t.Errorf("Method = %q, want %q", got.Method, "POST")
+	}
+	if got.ScheduledAfter == nil || !got.ScheduledAfter.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("ScheduledAfter = %v, want 2026-01-01T00:00:00Z", got.ScheduledAfter)
+	}
+	if got.ScheduledBefore == nil || !got.ScheduledBefore.Equal(time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("ScheduledBefore = %v, want 2026-12-31T00:00:00Z", got.ScheduledBefore)
+	}
+}
+
+func TestListJobs_InvalidMethod(t *testing.T) {
+	r := setupJobRouter(&testutil.MockJobRepository{}, &testutil.MockAttemptRepository{}, &testutil.MockCreditRepository{})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/jobs?method=FETCH", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestListJobs_InvalidTimeFilter(t *testing.T) {
+	r := setupJobRouter(&testutil.MockJobRepository{}, &testutil.MockAttemptRepository{}, &testutil.MockCreditRepository{})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/jobs?scheduled_after=not-a-time", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
 func TestCancelJob_HappyPath(t *testing.T) {
 	jobRepo := &testutil.MockJobRepository{
 		CancelFn: func(_ context.Context, _, _ string) error { return nil },

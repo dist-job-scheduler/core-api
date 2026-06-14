@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
@@ -165,6 +166,19 @@ type ListJobsInput struct {
 	Status string
 	Cursor string // raw base64url from query param
 	Limit  int
+
+	// Optional search/filter predicates. All combine with AND and with Status.
+	URLSearch       string     // case-insensitive substring match on the target URL
+	Method          string     // exact HTTP method (case-insensitive); empty = all
+	ScheduledAfter  *time.Time // scheduled_at >= this; nil = no lower bound
+	ScheduledBefore *time.Time // scheduled_at <= this; nil = no upper bound
+}
+
+// maxSearchLen caps the URL search term to keep ILIKE scans bounded.
+const maxSearchLen = 512
+
+var validMethods = map[string]struct{}{
+	"GET": {}, "POST": {}, "PUT": {}, "PATCH": {}, "DELETE": {},
 }
 
 type ListJobsResult struct {
@@ -219,10 +233,27 @@ func (u *JobUsecase) ListJobs(ctx context.Context, input ListJobsInput) (ListJob
 		}
 	}
 
+	var method string
+	if m := strings.ToUpper(strings.TrimSpace(input.Method)); m != "" {
+		if _, ok := validMethods[m]; !ok {
+			return ListJobsResult{}, domain.ErrInvalidMethod
+		}
+		method = m
+	}
+
+	search := strings.TrimSpace(input.URLSearch)
+	if len(search) > maxSearchLen {
+		return ListJobsResult{}, domain.ErrInvalidSearch
+	}
+
 	repoInput := repository.ListJobsInput{
-		UserID: input.UserID,
-		Status: status,
-		Limit:  limit + 1,
+		UserID:          input.UserID,
+		Status:          status,
+		Method:          method,
+		URLSearch:       search,
+		ScheduledAfter:  input.ScheduledAfter,
+		ScheduledBefore: input.ScheduledBefore,
+		Limit:           limit + 1,
 	}
 
 	if input.Cursor != "" {

@@ -220,6 +220,22 @@ func (r *JobRepository) ListJobs(ctx context.Context, input repository.ListJobsI
 		args = append(args, input.Status)
 		where = append(where, fmt.Sprintf("status = $%d", len(args)))
 	}
+	if input.Method != "" {
+		args = append(args, input.Method)
+		where = append(where, fmt.Sprintf("method = $%d", len(args)))
+	}
+	if input.URLSearch != "" {
+		args = append(args, "%"+escapeLike(input.URLSearch)+"%")
+		where = append(where, fmt.Sprintf("url ILIKE $%d", len(args)))
+	}
+	if input.ScheduledAfter != nil {
+		args = append(args, *input.ScheduledAfter)
+		where = append(where, fmt.Sprintf("scheduled_at >= $%d", len(args)))
+	}
+	if input.ScheduledBefore != nil {
+		args = append(args, *input.ScheduledBefore)
+		where = append(where, fmt.Sprintf("scheduled_at <= $%d", len(args)))
+	}
 	if input.CursorTime != nil {
 		args = append(args, *input.CursorTime, input.CursorID)
 		where = append(where, fmt.Sprintf("(scheduled_at, id) < ($%d, $%d)", len(args)-1, len(args)))
@@ -254,6 +270,15 @@ func (r *JobRepository) ListJobs(ctx context.Context, input repository.ListJobsI
 	}
 	return jobs, nil
 }
+
+// escapeLike escapes the LIKE/ILIKE wildcard metacharacters so that a
+// user-supplied search term is matched literally (the surrounding %...% is the
+// only wildcarding we want). Backslash is the default ILIKE escape character.
+func escapeLike(s string) string {
+	return likeEscaper.Replace(s)
+}
+
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // pgx.Row and pgx.Rows both implement this.
 type rowScanner interface {

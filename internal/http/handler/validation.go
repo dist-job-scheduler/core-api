@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -21,6 +22,20 @@ func parseLimit(raw string) (int, error) {
 		return 0, fmt.Errorf("invalid limit")
 	}
 	return n, nil
+}
+
+// parseTimeFilter parses an RFC3339 timestamp query parameter. Returns nil
+// (meaning "no filter") when the parameter is empty, and an error when it is
+// present but not a valid RFC3339 timestamp.
+func parseTimeFilter(raw string) (*time.Time, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid time filter: %w", err)
+	}
+	return &t, nil
 }
 
 // formatValidationError converts Gin/validator errors into user-friendly messages.
