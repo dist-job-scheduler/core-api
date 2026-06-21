@@ -315,19 +315,31 @@ func (r *BufferRepository) ClaimNextItem(ctx context.Context, bufferID, workerID
 			  AND  LEAST(b.rate_limit::double precision,
 			             b.tokens + EXTRACT(EPOCH FROM (NOW() - b.last_refill_at)) * b.rate_limit) >= 1
 			RETURNING b.id
+		),
+		claimed AS (
+			UPDATE buffer_items
+			SET    status       = 'running',
+			       claimed_at   = NOW(),
+			       claimed_by   = $1,
+			       heartbeat_at = NOW(),
+			       updated_at   = NOW()
+			WHERE  id IN (SELECT id FROM due)
+			  AND  EXISTS (SELECT 1 FROM bucket)
+			RETURNING id, buffer_id, user_id, url, method, headers, body,
+			          timeout_seconds, backoff, status, retry_count, max_retries,
+			          scheduled_at, claimed_at, claimed_by, heartbeat_at,
+			          completed_at, last_error, status_code, created_at, updated_at, replay_of
+		),
+		hb AS (
+			INSERT INTO buffer_item_heartbeats (buffer_item_id, heartbeat_at)
+			SELECT id, NOW() FROM claimed
+			ON CONFLICT (buffer_item_id) DO UPDATE SET heartbeat_at = EXCLUDED.heartbeat_at
 		)
-		UPDATE buffer_items
-		SET    status       = 'running',
-		       claimed_at   = NOW(),
-		       claimed_by   = $1,
-		       heartbeat_at = NOW(),
-		       updated_at   = NOW()
-		WHERE  id IN (SELECT id FROM due)
-		  AND  EXISTS (SELECT 1 FROM bucket)
-		RETURNING id, buffer_id, user_id, url, method, headers, body,
-		          timeout_seconds, backoff, status, retry_count, max_retries,
-		          scheduled_at, claimed_at, claimed_by, heartbeat_at,
-		          completed_at, last_error, status_code, created_at, updated_at, replay_of`
+		SELECT id, buffer_id, user_id, url, method, headers, body,
+		       timeout_seconds, backoff, status, retry_count, max_retries,
+		       scheduled_at, claimed_at, claimed_by, heartbeat_at,
+		       completed_at, last_error, status_code, created_at, updated_at, replay_of
+		FROM claimed`
 
 	item, err := scanBufferItem(r.pool.QueryRow(ctx, query, workerID, bufferID))
 	if err != nil {
@@ -340,83 +352,113 @@ func (r *BufferRepository) ClaimNextItem(ctx context.Context, bufferID, workerID
 }
 
 func (r *BufferRepository) UpdateItemHeartbeat(ctx context.Context, itemID string) error {
+	// Writes only the tiny sidecar row (HOT update). See migration 20260614000002.
 	_, err := r.pool.Exec(ctx,
-		`UPDATE buffer_items SET heartbeat_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND status = 'running'`, itemID)
+		`INSERT INTO buffer_item_heartbeats (buffer_item_id, heartbeat_at)
+		 SELECT $1, NOW()
+		 WHERE EXISTS (SELECT 1 FROM buffer_items WHERE id = $1 AND status = 'running')
+		 ON CONFLICT (buffer_item_id) DO UPDATE SET heartbeat_at = EXCLUDED.heartbeat_at`, itemID)
 	return err
 }
 
 func (r *BufferRepository) CompleteItem(ctx context.Context, itemID string, statusCode int) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE buffer_items SET status = 'completed', status_code = $2, completed_at = NOW(), updated_at = NOW()
-		WHERE id = $1`, itemID, statusCode)
+		`WITH done AS (
+			UPDATE buffer_items SET status = 'completed', status_code = $2, completed_at = NOW(), updated_at = NOW()
+			WHERE id = $1 RETURNING id
+		 )
+		 DELETE FROM buffer_item_heartbeats WHERE buffer_item_id IN (SELECT id FROM done)`, itemID, statusCode)
 	return err
 }
 
 func (r *BufferRepository) FailItem(ctx context.Context, itemID string, lastError string, statusCode *int) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE buffer_items SET status = 'failed', last_error = $2, status_code = $3, completed_at = NOW(), updated_at = NOW()
-		WHERE id = $1`, itemID, lastError, statusCode)
+		`WITH done AS (
+			UPDATE buffer_items SET status = 'failed', last_error = $2, status_code = $3, completed_at = NOW(), updated_at = NOW()
+			WHERE id = $1 RETURNING id
+		 )
+		 DELETE FROM buffer_item_heartbeats WHERE buffer_item_id IN (SELECT id FROM done)`, itemID, lastError, statusCode)
 	return err
 }
 
 func (r *BufferRepository) RescheduleItem(ctx context.Context, itemID string, lastError string, statusCode *int, retryAt time.Time) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE buffer_items
-		SET    status       = 'pending',
-		       retry_count  = retry_count + 1,
-		       last_error   = $2,
-		       status_code  = $3,
-		       scheduled_at = $4,
-		       claimed_at   = NULL,
-		       claimed_by   = NULL,
-		       heartbeat_at = NULL,
-		       updated_at   = NOW()
-		WHERE id = $1`, itemID, lastError, statusCode, retryAt)
+		`WITH done AS (
+			UPDATE buffer_items
+			SET    status       = 'pending',
+			       retry_count  = retry_count + 1,
+			       last_error   = $2,
+			       status_code  = $3,
+			       scheduled_at = $4,
+			       claimed_at   = NULL,
+			       claimed_by   = NULL,
+			       heartbeat_at = NULL,
+			       updated_at   = NOW()
+			WHERE id = $1 RETURNING id
+		 )
+		 DELETE FROM buffer_item_heartbeats WHERE buffer_item_id IN (SELECT id FROM done)`, itemID, lastError, statusCode, retryAt)
 	return err
 }
 
 // ── Reaper methods ───────────────────────────────────────────────────────────
 
 func (r *BufferRepository) RescheduleStaleItems(ctx context.Context, staleCutoff time.Time, limit int) (int, error) {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE buffer_items
-		SET    status       = 'pending',
-		       retry_count  = retry_count + 1,
-		       last_error   = 'worker timeout',
-		       claimed_at   = NULL,
-		       claimed_by   = NULL,
-		       heartbeat_at = NULL,
-		       updated_at   = NOW()
-		WHERE id IN (
-			SELECT id FROM buffer_items
-			WHERE  status       = 'running'
-			  AND  heartbeat_at < $1
-			  AND  retry_count  < max_retries
-			ORDER BY heartbeat_at ASC
+	// Staleness comes from the sidecar; a running item with a missing heartbeat
+	// row is treated as stale too (defensive).
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		WITH stale AS (
+			SELECT bi.id FROM buffer_items bi
+			LEFT JOIN buffer_item_heartbeats h ON h.buffer_item_id = bi.id
+			WHERE  bi.status      = 'running'
+			  AND  (h.heartbeat_at IS NULL OR h.heartbeat_at < $1)
+			  AND  bi.retry_count  < bi.max_retries
+			ORDER BY h.heartbeat_at ASC NULLS FIRST
 			LIMIT $2
-			FOR UPDATE SKIP LOCKED
-		)`, staleCutoff, limit)
-	return int(tag.RowsAffected()), err
+			FOR UPDATE OF bi SKIP LOCKED
+		), upd AS (
+			UPDATE buffer_items
+			SET    status       = 'pending',
+			       retry_count  = retry_count + 1,
+			       last_error   = 'worker timeout',
+			       claimed_at   = NULL,
+			       claimed_by   = NULL,
+			       heartbeat_at = NULL,
+			       updated_at   = NOW()
+			WHERE id IN (SELECT id FROM stale)
+			RETURNING id
+		), del AS (
+			DELETE FROM buffer_item_heartbeats WHERE buffer_item_id IN (SELECT id FROM upd)
+		)
+		SELECT count(*) FROM upd`, staleCutoff, limit).Scan(&n)
+	return n, err
 }
 
 func (r *BufferRepository) FailStaleItems(ctx context.Context, staleCutoff time.Time, limit int) (int, error) {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE buffer_items
-		SET    status      = 'failed',
-		       last_error  = 'worker timeout: max retries exceeded',
-		       completed_at = NOW(),
-		       updated_at  = NOW()
-		WHERE id IN (
-			SELECT id FROM buffer_items
-			WHERE  status       = 'running'
-			  AND  heartbeat_at < $1
-			  AND  retry_count  >= max_retries
-			ORDER BY heartbeat_at ASC
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		WITH stale AS (
+			SELECT bi.id FROM buffer_items bi
+			LEFT JOIN buffer_item_heartbeats h ON h.buffer_item_id = bi.id
+			WHERE  bi.status      = 'running'
+			  AND  (h.heartbeat_at IS NULL OR h.heartbeat_at < $1)
+			  AND  bi.retry_count  >= bi.max_retries
+			ORDER BY h.heartbeat_at ASC NULLS FIRST
 			LIMIT $2
-			FOR UPDATE SKIP LOCKED
-		)`, staleCutoff, limit)
-	return int(tag.RowsAffected()), err
+			FOR UPDATE OF bi SKIP LOCKED
+		), upd AS (
+			UPDATE buffer_items
+			SET    status      = 'failed',
+			       last_error  = 'worker timeout: max retries exceeded',
+			       completed_at = NOW(),
+			       updated_at  = NOW()
+			WHERE id IN (SELECT id FROM stale)
+			RETURNING id
+		), del AS (
+			DELETE FROM buffer_item_heartbeats WHERE buffer_item_id IN (SELECT id FROM upd)
+		)
+		SELECT count(*) FROM upd`, staleCutoff, limit).Scan(&n)
+	return n, err
 }
 
 // ── Scan helpers ─────────────────────────────────────────────────────────────
