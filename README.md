@@ -93,6 +93,72 @@ See `CLAUDE.md` for the full local setup guide and coding conventions.
 
 ---
 
+## Self-host
+
+Fliq is open source and runs the whole stack — API, scheduler, and Postgres — from
+one `docker compose`. No Clerk account, no Redis, no external services. Only Docker
+is required.
+
+```bash
+git clone https://github.com/fliq-sh/core-api.git && cd core-api
+
+# Build + start Postgres, run migrations, then bring up the server + scheduler.
+docker compose --profile migrate --profile app up --build
+```
+
+That's it — the API is live on `http://localhost:8080`:
+
+```bash
+curl localhost:8080/health
+# {"status":"ok","version":"dev","time":"..."}
+```
+
+### Get a first credential (no Clerk)
+
+Self-hosted Fliq authenticates with **HS256 JWTs** signed by `JWT_SECRET` (set in
+`docker-compose.yml` — override it for anything real). Mint one for any user id;
+the first authenticated request auto-provisions that user with free credits.
+
+```bash
+SECRET='dev-only-change-me-0123456789abcdef0123456789'   # must match the server's JWT_SECRET
+b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+h=$(printf '{"alg":"HS256","typ":"JWT"}' | b64)
+p=$(printf '{"sub":"local-user","exp":%d}' "$(($(date +%s)+31536000))" | b64)
+s=$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -hmac "$SECRET" -binary | b64)
+JWT="$h.$p.$s"
+
+# Exchange the JWT for a long-lived API token (fliq_sk_*) you can use everywhere:
+curl -s -X POST localhost:8080/tokens \
+  -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' \
+  -d '{"name":"self-host"}'
+# → {"token":"fliq_sk_...", ...}
+```
+
+Then schedule a job with the `fliq_sk_*` token:
+
+```bash
+curl -X POST localhost:8080/jobs \
+  -H "Authorization: Bearer fliq_sk_..." -H 'Content-Type: application/json' \
+  -d '{"url":"https://httpbin.org/post","method":"POST","scheduled_at":"2030-01-01T00:00:00Z"}'
+```
+
+### Configuration
+
+Everything is env-driven (`caarlos0/env`); the compose file sets sane local defaults.
+The ones that matter when self-hosting:
+
+| Var | Purpose |
+|---|---|
+| `DATABASE_URL` | Postgres connection string |
+| `JWT_SECRET` | HS256 signing secret for local auth (min 32 chars) — **change it** |
+| `CLERK_JWKS_URL` | set only to use Clerk RS256 auth instead of the HS256 path |
+| `WORKER_COUNT` / `POLL_INTERVAL_SEC` | scheduler concurrency + poll cadence |
+| `STRIPE_*` | optional — only needed for paid top-ups |
+
+To run the binaries directly instead of in Docker, see **Local dev** above.
+
+---
+
 ## Roadmap
 
 ### Phase 1 — Core backend ✅

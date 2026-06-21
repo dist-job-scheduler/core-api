@@ -12,7 +12,11 @@ FROM gcr.io/distroless/static-debian12
 COPY --from=builder /go/bin/goose /goose
 COPY migrations /migrations
 
-# Usage: docker run --rm -e DATABASE_URL=... migrate
-# Passes DATABASE_URL and any extra args to goose
-ENTRYPOINT ["/goose", "-dir", "/migrations", "postgres"]
+# goose reads its config from GOOSE_* env vars, so this works on distroless (no
+# shell to splice $DATABASE_URL into an argv). Supply your Postgres connection
+# string at runtime via GOOSE_DBSTRING; driver + migration dir default below.
+#   docker run --rm -e GOOSE_DBSTRING="postgres://user:pass@host:5432/db?sslmode=disable" migrate
+ENV GOOSE_DRIVER=postgres
+ENV GOOSE_MIGRATION_DIR=/migrations
+ENTRYPOINT ["/goose"]
 CMD ["up"]
