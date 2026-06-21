@@ -56,6 +56,11 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	buffers.GET("/:id/items/:itemId", bufferHandler.GetItem)
 	buffers.POST("/:id/items/:itemId/replay", bufferHandler.ReplayItem)
 
+	// Public email-verification confirm endpoint. No auth: the signed token in
+	// the query string is the credential. Registered before the param route so
+	// "verify" is matched as a static segment, not as an :id.
+	r.GET("/alerts/verify", alertHandler.Verify)
+
 	// Protected alert channel routes
 	alerts := r.Group("/alerts", authMW, ensureUser, rateLimiter.Middleware())
 	alerts.POST("", alertHandler.Create)

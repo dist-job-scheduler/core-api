@@ -15,6 +15,7 @@ import (
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/health"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/infrastructure/postgres"
 	ctxlog "github.com/ErlanBelekov/dist-job-scheduler/internal/log"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/mailer"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/metrics"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/scheduler"
 	"github.com/lmittmann/tint"
@@ -51,8 +52,21 @@ func main() {
 	signingRepo := postgres.NewSigningSecretRepository(pool)
 	alertRepo := postgres.NewAlertChannelRepository(pool)
 
+	var mailProvider mailer.Provider
+	if cfg.ResendAPIKey == "" {
+		logger.Warn("RESEND_API_KEY unset — email alerts will be dropped (no-op mailer)")
+		mailProvider = mailer.NewNoopProvider(logger)
+	} else {
+		mailProvider = mailer.NewResendProvider(cfg.ResendAPIKey, cfg.AlertEmailFrom)
+	}
+
 	notifier := scheduler.NewWebhookNotifier(logger, signingRepo)
-	alertNotifier := scheduler.NewAlertNotifier(logger, alertRepo)
+	alertNotifier := scheduler.NewAlertNotifier(logger, alertRepo, mailProvider)
+
+	lowBalance := scheduler.LowBalanceConfig{
+		Threshold: cfg.LowBalanceThreshold,
+		TopUpURL:  cfg.BillingSuccessURL,
+	}
 
 	worker := scheduler.NewWorker(
 		jobRepo,
@@ -60,6 +74,7 @@ func main() {
 		creditRepo,
 		notifier,
 		alertNotifier,
+		lowBalance,
 		logger,
 		time.Duration(cfg.PollIntervalSec)*time.Second,
 		cfg.WorkerCount,
@@ -76,7 +91,7 @@ func main() {
 
 	bufferRepo := postgres.NewBufferRepository(pool)
 	drainer := scheduler.NewBufferDrainer(
-		bufferRepo, creditRepo, signingRepo, notifier, alertNotifier, logger,
+		bufferRepo, creditRepo, signingRepo, notifier, alertNotifier, lowBalance, logger,
 		time.Duration(cfg.DrainerPollIntervalSec)*time.Second,
 		cfg.DrainerConcurrency,
 	)

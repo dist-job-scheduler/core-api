@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/repository"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -68,9 +69,10 @@ func (r *CreditRepo) HasCredits(ctx context.Context, userID string) (bool, error
 	var dailyLimit int64
 	tag, refreshErr := tx.Exec(ctx,
 		`UPDATE user_credits
-		 SET balance          = daily_free_limit,
-		     refreshed_at     = NOW(),
-		     updated_at       = NOW()
+		 SET balance              = daily_free_limit,
+		     low_balance_notified = FALSE,
+		     refreshed_at         = NOW(),
+		     updated_at           = NOW()
 		 WHERE user_id = $1
 		   AND plan    = 'free'
 		   AND DATE(refreshed_at AT TIME ZONE 'UTC') < CURRENT_DATE`,
@@ -123,21 +125,28 @@ func (r *CreditRepo) HasCredits(ctx context.Context, userID string) (bool, error
 	return balance > 0, nil
 }
 
-func (r *CreditRepo) Deduct(ctx context.Context, userID, jobID string) error {
-	return r.deduct(ctx, userID, domain.CreditTxJobExecution, "job_id", jobID)
+func (r *CreditRepo) Deduct(ctx context.Context, userID, jobID string, threshold int64) (*repository.LowBalanceCrossing, error) {
+	return r.deduct(ctx, userID, domain.CreditTxJobExecution, "job_id", jobID, threshold)
 }
 
-func (r *CreditRepo) DeductForBufferItem(ctx context.Context, userID, bufferItemID string) error {
-	return r.deduct(ctx, userID, domain.CreditTxBufferExecution, "buffer_item_id", bufferItemID)
+func (r *CreditRepo) DeductForBufferItem(ctx context.Context, userID, bufferItemID string, threshold int64) (*repository.LowBalanceCrossing, error) {
+	return r.deduct(ctx, userID, domain.CreditTxBufferExecution, "buffer_item_id", bufferItemID, threshold)
 }
 
 // deduct subtracts 1 credit and records a ledger row referencing refColumn (a
 // jobs or buffer_items FK). Per-attempt billing: not idempotent, no uniqueness
 // on the reference column.
-func (r *CreditRepo) deduct(ctx context.Context, userID string, txType domain.CreditTxType, refColumn, refID string) error {
+//
+// It also detects a downward crossing of the low-balance threshold. The UPDATE
+// returns the new balance and atomically flips low_balance_notified TRUE only on
+// the crossing edge (new balance below threshold, old balance at-or-above it,
+// latch not already set). Because the latch flip is part of the same UPDATE,
+// concurrent workers race on a single row and exactly one observes the
+// crossing — the others see low_balance_notified already TRUE and return nil.
+func (r *CreditRepo) deduct(ctx context.Context, userID string, txType domain.CreditTxType, refColumn, refID string, threshold int64) (crossing *repository.LowBalanceCrossing, err error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -145,12 +154,23 @@ func (r *CreditRepo) deduct(ctx context.Context, userID string, txType domain.Cr
 		}
 	}()
 
-	_, err = tx.Exec(ctx,
-		`UPDATE user_credits SET balance = balance - 1, updated_at = NOW() WHERE user_id = $1`,
-		userID,
-	)
+	// The CTE flips the latch and returns whether this UPDATE was the crossing
+	// edge. crossed is TRUE for exactly one concurrent deduction.
+	var newBalance int64
+	var crossed bool
+	err = tx.QueryRow(ctx,
+		`UPDATE user_credits
+		 SET balance              = balance - 1,
+		     low_balance_notified = low_balance_notified
+		         OR ($2 > 0 AND balance - 1 < $2 AND NOT low_balance_notified),
+		     updated_at           = NOW()
+		 WHERE user_id = $1
+		 RETURNING balance,
+		           ($2 > 0 AND balance < $2 AND balance + 1 >= $2)`,
+		userID, threshold,
+	).Scan(&newBalance, &crossed)
 	if err != nil {
-		return fmt.Errorf("deduct credit: %w", err)
+		return nil, fmt.Errorf("deduct credit: %w", err)
 	}
 
 	_, err = tx.Exec(ctx,
@@ -159,13 +179,29 @@ func (r *CreditRepo) deduct(ctx context.Context, userID string, txType domain.Cr
 		userID, txType, refID,
 	)
 	if err != nil {
-		return fmt.Errorf("insert deduct tx: %w", err)
+		return nil, fmt.Errorf("insert deduct tx: %w", err)
+	}
+
+	if crossed {
+		var burn int64
+		// Trailing-window burn (sum of consumption, reported positive).
+		scanErr := tx.QueryRow(ctx,
+			`SELECT COALESCE(-SUM(amount), 0)
+			 FROM credit_transactions
+			 WHERE user_id = $1 AND amount < 0 AND created_at >= NOW() - make_interval(secs => $2)`,
+			userID, int64(domain.CreditLowBurnWindow.Seconds()),
+		).Scan(&burn)
+		if scanErr != nil {
+			err = scanErr
+			return nil, fmt.Errorf("sum recent burn: %w", err)
+		}
+		crossing = &repository.LowBalanceCrossing{Balance: newBalance, Threshold: threshold, RecentBurn: burn}
 	}
 
 	if err = tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return nil, fmt.Errorf("commit: %w", err)
 	}
-	return nil
+	return crossing, nil
 }
 
 func (r *CreditRepo) TopUp(ctx context.Context, userID string, amount int64, stripePaymentIntentID string) error {
@@ -180,7 +216,9 @@ func (r *CreditRepo) TopUp(ctx context.Context, userID string, amount int64, str
 	}()
 
 	_, err = tx.Exec(ctx,
-		`UPDATE user_credits SET balance = balance + $2, updated_at = NOW() WHERE user_id = $1`,
+		`UPDATE user_credits
+		 SET balance = balance + $2, low_balance_notified = FALSE, updated_at = NOW()
+		 WHERE user_id = $1`,
 		userID, amount,
 	)
 	if err != nil {

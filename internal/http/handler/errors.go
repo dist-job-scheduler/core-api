@@ -32,6 +32,9 @@ const (
 
 	errAlertChannelNotFound    = "Alert channel not found"
 	errInvalidAlertChannelType = "Invalid alert channel type"
+	errAlertChannelNotVerified = "Email alert channels must be verified before they can be enabled"
+	errInvalidAlertTarget      = "target must be a URL for webhook/slack channels or an email address for email channels"
+	errInvalidVerifyToken      = "Verification link is invalid or expired"
 
 	errInvalidDays = "days must be a non-negative integer"
 )

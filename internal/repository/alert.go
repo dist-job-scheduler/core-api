@@ -15,7 +15,15 @@ type AlertChannelRepository interface {
 	SetEnabled(ctx context.Context, id, userID string, enabled bool) error
 	Delete(ctx context.Context, id, userID string) error
 
+	// MarkVerified flips an email channel to verified + enabled. It is keyed by
+	// id alone (no user scope): the caller proves ownership by holding a signed
+	// confirm token, not a session. Returns domain.ErrAlertChannelNotFound if no
+	// such channel exists. Idempotent — re-confirming a verified channel is a
+	// no-op success.
+	MarkVerified(ctx context.Context, id string) error
+
 	// ListEnabled returns the user's enabled channels. Called by the scheduler
-	// when a job or buffer item is permanently failed, to fan out the alert.
+	// when a job or buffer item is permanently failed, or on a low-balance
+	// crossing, to fan out the alert.
 	ListEnabled(ctx context.Context, userID string) ([]*domain.AlertChannel, error)
 }

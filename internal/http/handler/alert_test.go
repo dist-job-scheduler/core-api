@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/emailverify"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/http/handler"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/testutil"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/usecase"
@@ -17,10 +18,12 @@ import (
 )
 
 func setupAlertRouter(repo *testutil.MockAlertChannelRepository) *gin.Engine {
-	uc := usecase.NewAlertUsecase(repo)
+	uc := usecase.NewAlertUsecase(repo, &testutil.FakeMailer{},
+		emailverify.NewSigner([]byte("test-secret-32-chars-long-xxxxxx")), "https://api.fliq.test")
 	h := handler.NewAlertHandler(uc, slog.Default())
 
 	r := gin.New()
+	r.GET("/alerts/verify", h.Verify)
 	g := r.Group("/", injectUser(testUserID))
 	g.POST("/alerts", h.Create)
 	g.GET("/alerts", h.List)
@@ -61,7 +64,7 @@ func TestCreateAlertChannel_HappyPath(t *testing.T) {
 func TestCreateAlertChannel_InvalidTypeRejectedByBinding(t *testing.T) {
 	r := setupAlertRouter(&testutil.MockAlertChannelRepository{})
 
-	body := `{"type":"email","target":"ops@example.com"}`
+	body := `{"type":"carrier_pigeon","target":"coop-3"}`
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/alerts", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -69,6 +72,82 @@ func TestCreateAlertChannel_InvalidTypeRejectedByBinding(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestCreateAlertChannel_Email_AcceptedAndDisabled(t *testing.T) {
+	var saved *domain.AlertChannel
+	repo := &testutil.MockAlertChannelRepository{
+		CreateFn: func(_ context.Context, ch *domain.AlertChannel) (*domain.AlertChannel, error) {
+			ch.ID = "alert-email"
+			saved = ch
+			return ch, nil
+		},
+	}
+	r := setupAlertRouter(repo)
+
+	body := `{"type":"email","target":"ops@example.com"}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/alerts", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusCreated, w.Body.String())
+	}
+	if saved.Enabled || saved.Verified {
+		t.Error("email channel should be created disabled + unverified")
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["enabled"] != false || resp["verified"] != false {
+		t.Errorf("enabled=%v verified=%v, want false/false", resp["enabled"], resp["verified"])
+	}
+}
+
+func TestCreateAlertChannel_EmailRejectsBadAddress(t *testing.T) {
+	r := setupAlertRouter(&testutil.MockAlertChannelRepository{})
+
+	body := `{"type":"email","target":"https://not-an-email.example.com"}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/alerts", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestVerifyAlertChannel_Endpoint(t *testing.T) {
+	var verified string
+	repo := &testutil.MockAlertChannelRepository{
+		MarkVerifiedFn: func(_ context.Context, id string) error { verified = id; return nil },
+	}
+	r := setupAlertRouter(repo)
+
+	token := emailverify.NewSigner([]byte("test-secret-32-chars-long-xxxxxx")).Sign("chan-1")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/alerts/verify?token="+token, nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	if verified != "chan-1" {
+		t.Errorf("verified = %q, want chan-1", verified)
+	}
+}
+
+func TestVerifyAlertChannel_BadToken(t *testing.T) {
+	r := setupAlertRouter(&testutil.MockAlertChannelRepository{})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/alerts/verify?token=garbage", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
 

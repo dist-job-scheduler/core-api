@@ -9,6 +9,7 @@ import (
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/infrastructure/postgres"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/testutil"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func setupBillingRepo(t *testing.T) (*postgres.CreditRepo, string) {
@@ -82,7 +83,7 @@ func TestBillingRepo_Deduct(t *testing.T) {
 	}
 
 	balanceBefore, _ := repo.GetBalance(ctx, userID)
-	if err := repo.Deduct(ctx, userID, created.ID); err != nil {
+	if _, err := repo.Deduct(ctx, userID, created.ID, 0); err != nil {
 		t.Fatalf("deduct: %v", err)
 	}
 	balanceAfter, _ := repo.GetBalance(ctx, userID)
@@ -149,7 +150,7 @@ func TestBillingRepo_ListTransactions_Pagination(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create job %d: %v", i, err)
 		}
-		if err := repo.Deduct(ctx, userID, created.ID); err != nil {
+		if _, err := repo.Deduct(ctx, userID, created.ID, 0); err != nil {
 			t.Fatalf("deduct %d: %v", i, err)
 		}
 	}
@@ -176,5 +177,109 @@ func TestBillingRepo_ListTransactions_Pagination(t *testing.T) {
 	}
 	if cursor2 != "" {
 		t.Fatalf("expected empty cursor on last page, got %s", cursor2)
+	}
+}
+
+// setBalance forces a user's credit balance for threshold-crossing tests.
+func setBalance(t *testing.T, pool *pgxpool.Pool, userID string, balance int64) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE user_credits SET balance = $2 WHERE user_id = $1`, userID, balance,
+	); err != nil {
+		t.Fatalf("set balance: %v", err)
+	}
+}
+
+// TestBillingRepo_Deduct_LowBalanceCrossing exercises the latch-based crossing
+// detection in deduct(): a crossing fires exactly once on the downward edge,
+// stays silent below the threshold, and re-arms after a top-up.
+func TestBillingRepo_Deduct_LowBalanceCrossing(t *testing.T) {
+	pool := testutil.SetupTestDB(t)
+	testutil.TruncateAll(t, pool)
+	userID := testutil.UserID()
+	testutil.SeedUser(t, pool, userID)
+	repo := postgres.NewCreditRepository(pool)
+	jobRepo := postgres.NewJobRepository(pool)
+	ctx := context.Background()
+
+	const threshold int64 = 5
+
+	mkJob := func() string {
+		t.Helper()
+		created, err := jobRepo.Create(ctx, testutil.NewJob(testutil.WithUserID(userID)))
+		if err != nil {
+			t.Fatalf("create job: %v", err)
+		}
+		return created.ID
+	}
+
+	// Sitting exactly at the threshold; the next deduction crosses it.
+	setBalance(t, pool, userID, threshold)
+
+	crossing, err := repo.Deduct(ctx, userID, mkJob(), threshold)
+	if err != nil {
+		t.Fatalf("deduct (crossing): %v", err)
+	}
+	if crossing == nil {
+		t.Fatal("expected a low-balance crossing, got nil")
+	}
+	if crossing.Balance != threshold-1 {
+		t.Fatalf("crossing balance = %d, want %d", crossing.Balance, threshold-1)
+	}
+	if crossing.Threshold != threshold {
+		t.Fatalf("crossing threshold = %d, want %d", crossing.Threshold, threshold)
+	}
+	if crossing.RecentBurn < 1 {
+		t.Fatalf("crossing recent burn = %d, want >= 1", crossing.RecentBurn)
+	}
+
+	// Already below the threshold: the latch is set, so no further crossing.
+	crossing2, err := repo.Deduct(ctx, userID, mkJob(), threshold)
+	if err != nil {
+		t.Fatalf("deduct (latched): %v", err)
+	}
+	if crossing2 != nil {
+		t.Fatalf("expected no second crossing while latched, got %+v", crossing2)
+	}
+
+	// A top-up re-arms the latch; dropping back to the threshold crosses again.
+	if err := repo.TopUp(ctx, userID, 100, "pi_test_lowbalance"); err != nil {
+		t.Fatalf("top up: %v", err)
+	}
+	setBalance(t, pool, userID, threshold)
+
+	crossing3, err := repo.Deduct(ctx, userID, mkJob(), threshold)
+	if err != nil {
+		t.Fatalf("deduct (re-armed): %v", err)
+	}
+	if crossing3 == nil {
+		t.Fatal("expected crossing to re-fire after top-up, got nil")
+	}
+}
+
+// TestBillingRepo_Deduct_ThresholdDisabled confirms a zero threshold never
+// reports a crossing, even as the balance falls through small values.
+func TestBillingRepo_Deduct_ThresholdDisabled(t *testing.T) {
+	pool := testutil.SetupTestDB(t)
+	testutil.TruncateAll(t, pool)
+	userID := testutil.UserID()
+	testutil.SeedUser(t, pool, userID)
+	repo := postgres.NewCreditRepository(pool)
+	jobRepo := postgres.NewJobRepository(pool)
+	ctx := context.Background()
+
+	setBalance(t, pool, userID, 2)
+	for i := 0; i < 2; i++ {
+		created, err := jobRepo.Create(ctx, testutil.NewJob(testutil.WithUserID(userID)))
+		if err != nil {
+			t.Fatalf("create job: %v", err)
+		}
+		crossing, err := repo.Deduct(ctx, userID, created.ID, 0)
+		if err != nil {
+			t.Fatalf("deduct %d: %v", i, err)
+		}
+		if crossing != nil {
+			t.Fatalf("threshold 0 must never cross, got %+v", crossing)
+		}
 	}
 }

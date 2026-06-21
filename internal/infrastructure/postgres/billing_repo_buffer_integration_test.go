@@ -50,7 +50,7 @@ func TestBillingRepo_DeductForBufferItem(t *testing.T) {
 	itemID := seedBufferItem(t, pool, userID)
 
 	balanceBefore, _ := repo.GetBalance(ctx, userID)
-	if err := repo.DeductForBufferItem(ctx, userID, itemID); err != nil {
+	if _, err := repo.DeductForBufferItem(ctx, userID, itemID, 0); err != nil {
 		t.Fatalf("deduct for buffer item: %v", err)
 	}
 	balanceAfter, _ := repo.GetBalance(ctx, userID)
@@ -83,7 +83,7 @@ func TestBillingRepo_DeductForBufferItem_PerAttempt(t *testing.T) {
 
 	balanceBefore, _ := repo.GetBalance(ctx, userID)
 	for i := 0; i < 2; i++ {
-		if err := repo.DeductForBufferItem(ctx, userID, itemID); err != nil {
+		if _, err := repo.DeductForBufferItem(ctx, userID, itemID, 0); err != nil {
 			t.Fatalf("deduct attempt %d: %v", i, err)
 		}
 	}

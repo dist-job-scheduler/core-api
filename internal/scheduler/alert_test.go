@@ -94,7 +94,7 @@ func TestNotifyFailureAsync_DeliversToEnabledChannels(t *testing.T) {
 			}, nil
 		},
 	}
-	n := newAlertNotifier(slog.Default(), repo, srv.Client())
+	n := newAlertNotifier(slog.Default(), repo, &testutil.FakeMailer{}, srv.Client())
 
 	n.NotifyFailureAsync(context.Background(), domain.AlertEvent{
 		UserID: "user-1", ResourceType: domain.AlertResourceJob, ResourceID: "job-1",
@@ -119,9 +119,139 @@ func TestNotifyFailure_RepoErrorTolerated(t *testing.T) {
 			return nil, context.DeadlineExceeded
 		},
 	}
-	n := NewAlertNotifier(slog.Default(), repo)
+	n := NewAlertNotifier(slog.Default(), repo, &testutil.FakeMailer{})
 	// notifyFailure swallows the repo error (logged, not returned).
 	n.notifyFailure(context.Background(), domain.AlertEvent{UserID: "user-1"})
+}
+
+func TestBuildAlertBody_Email(t *testing.T) {
+	event := domain.AlertEvent{
+		ResourceType: domain.AlertResourceJob,
+		ResourceID:   "job-9",
+		URL:          "https://api.example.com",
+		Method:       "POST",
+		LastError:    "boom",
+		Attempts:     4,
+	}
+	body, err := buildAlertBody(domain.AlertChannelEmail, event)
+	if err != nil {
+		t.Fatalf("buildAlertBody: %v", err)
+	}
+	// Email body is plain text, not JSON.
+	text := string(body)
+	for _, want := range []string{"job-9", "boom", "4 attempt"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("email body %q missing %q", text, want)
+		}
+	}
+}
+
+func TestBuildCreditLowBody_Webhook(t *testing.T) {
+	event := domain.CreditLowEvent{
+		Balance: 42, Threshold: 100, RecentBurn: 500,
+		TopUpURL: "https://fliq.sh/billing", CrossedAt: time.Now(),
+	}
+	body, err := buildCreditLowBody(domain.AlertChannelWebhook, event)
+	if err != nil {
+		t.Fatalf("buildCreditLowBody: %v", err)
+	}
+	var payload creditLowWebhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload.Event != "credit_low" || payload.Balance != 42 || payload.Threshold != 100 || payload.RecentBurn != 500 {
+		t.Errorf("payload = %+v, want credit_low/42/100/500", payload)
+	}
+}
+
+func TestBuildCreditLowBody_SlackAndEmail(t *testing.T) {
+	event := domain.CreditLowEvent{Balance: 42, Threshold: 100, RecentBurn: 500, TopUpURL: "https://fliq.sh/billing"}
+
+	slackBody, err := buildCreditLowBody(domain.AlertChannelSlack, event)
+	if err != nil {
+		t.Fatalf("slack: %v", err)
+	}
+	var slack map[string]string
+	if err = json.Unmarshal(slackBody, &slack); err != nil {
+		t.Fatalf("unmarshal slack: %v", err)
+	}
+	if !strings.Contains(slack["text"], "42") || !strings.Contains(slack["text"], "billing") {
+		t.Errorf("slack text missing balance/link: %q", slack["text"])
+	}
+
+	emailBody, err := buildCreditLowBody(domain.AlertChannelEmail, event)
+	if err != nil {
+		t.Fatalf("email: %v", err)
+	}
+	if !strings.Contains(string(emailBody), "42") {
+		t.Errorf("email body missing balance: %q", emailBody)
+	}
+}
+
+func TestNotifyFailure_EmailChannelUsesMailer(t *testing.T) {
+	mail := &testutil.FakeMailer{}
+	repo := &testutil.MockAlertChannelRepository{
+		ListEnabledFn: func(_ context.Context, _ string) ([]*domain.AlertChannel, error) {
+			return []*domain.AlertChannel{
+				{ID: "e", Type: domain.AlertChannelEmail, Target: "ops@example.com", Enabled: true, Verified: true},
+			}, nil
+		},
+	}
+	n := newAlertNotifier(slog.Default(), repo, mail, http.DefaultClient)
+
+	// Synchronous path — no goroutine, deterministic assertion.
+	n.notifyFailure(context.Background(), domain.AlertEvent{
+		UserID: "user-1", ResourceType: domain.AlertResourceJob, ResourceID: "job-1", LastError: "down",
+	})
+
+	msgs := mail.Messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 email, got %d", len(msgs))
+	}
+	if msgs[0].To != "ops@example.com" || !strings.Contains(msgs[0].Text, "job-1") {
+		t.Errorf("email = %+v, want to ops@example.com mentioning job-1", msgs[0])
+	}
+}
+
+func TestNotifyCreditLow_FansOutToEmailAndWebhook(t *testing.T) {
+	mail := &testutil.FakeMailer{}
+	var mu sync.Mutex
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	repo := &testutil.MockAlertChannelRepository{
+		ListEnabledFn: func(_ context.Context, _ string) ([]*domain.AlertChannel, error) {
+			return []*domain.AlertChannel{
+				{ID: "e", Type: domain.AlertChannelEmail, Target: "ops@example.com", Enabled: true, Verified: true},
+				{ID: "w", Type: domain.AlertChannelWebhook, Target: srv.URL, Enabled: true, Verified: true},
+			}, nil
+		},
+	}
+	n := newAlertNotifier(slog.Default(), repo, mail, srv.Client())
+
+	n.notifyCreditLow(context.Background(), domain.CreditLowEvent{
+		UserID: "user-1", Balance: 10, Threshold: 100, RecentBurn: 1000, TopUpURL: "https://fliq.sh/billing",
+	})
+
+	if got := len(mail.Messages()); got != 1 {
+		t.Errorf("email count = %d, want 1", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 1 {
+		t.Errorf("webhook hits = %d, want 1", hits)
+	}
+}
+
+func TestNotifyCreditLowAsync_NilReceiverSafe(t *testing.T) {
+	var n *AlertNotifier
+	n.NotifyCreditLowAsync(context.Background(), domain.CreditLowEvent{UserID: "user-1"})
 }
 
 func waitFor(t *testing.T, cond func() bool) {

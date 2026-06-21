@@ -6,6 +6,19 @@ import (
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 )
 
+// LowBalanceCrossing reports a downward crossing of the low-balance threshold,
+// returned by Deduct/DeductForBufferItem when the deduction that just ran took
+// the balance below the threshold for the first time since the last top-up.
+type LowBalanceCrossing struct {
+	// Balance is the balance after the deduction (at the moment of crossing).
+	Balance int64
+	// Threshold is the floor that was crossed.
+	Threshold int64
+	// RecentBurn is the credits spent over the trailing
+	// domain.CreditLowBurnWindow, for the "you'll run dry in ~N" hint.
+	RecentBurn int64
+}
+
 // CreditRepository manages per-user credit balances and the immutable audit ledger.
 type CreditRepository interface {
 	// EnsureExists inserts a default credit row for the user if one does not already exist.
@@ -25,12 +38,20 @@ type CreditRepository interface {
 	// Called after every execution attempt (success or failure). A brief
 	// negative balance is acceptable; the creation gate (HasCredits) prevents
 	// sustained overdraft.
-	Deduct(ctx context.Context, userID, jobID string) error
+	//
+	// threshold is the low-balance warning floor (0 disables it). When this
+	// deduction takes the balance from at-or-above threshold to below it — and
+	// the user has not already been notified for this crossing — a non-nil
+	// LowBalanceCrossing is returned so the caller can fan out a credit_low
+	// alert. The hysteresis latch is updated atomically in the same transaction,
+	// so concurrent workers fire at most once per crossing.
+	Deduct(ctx context.Context, userID, jobID string, threshold int64) (*LowBalanceCrossing, error)
 
 	// DeductForBufferItem subtracts 1 credit and records a buffer_item_execution
 	// transaction. Like Deduct, it is called once per execution attempt (success
-	// or failure) and is intentionally not idempotent.
-	DeductForBufferItem(ctx context.Context, userID, bufferItemID string) error
+	// or failure), is intentionally not idempotent, and reports a low-balance
+	// crossing under the same hysteresis rules.
+	DeductForBufferItem(ctx context.Context, userID, bufferItemID string, threshold int64) (*LowBalanceCrossing, error)
 
 	// TopUp adds credits and records a stripe_topup transaction. Called by the
 	// Stripe webhook handler on checkout.session.completed.

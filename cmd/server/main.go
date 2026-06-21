@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/config"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/emailverify"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/health"
 	httptransport "github.com/ErlanBelekov/dist-job-scheduler/internal/http"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/http/handler"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/http/middleware"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/infrastructure/postgres"
 	ctxlog "github.com/ErlanBelekov/dist-job-scheduler/internal/log"
+	"github.com/ErlanBelekov/dist-job-scheduler/internal/mailer"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/metrics"
 	stripeclient "github.com/ErlanBelekov/dist-job-scheduler/internal/stripe"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/usecase"
@@ -92,9 +94,11 @@ func main() {
 	bufferUsecase := usecase.NewBufferUsecase(bufferRepo, creditRepo)
 	bufferHandler := handler.NewBufferHandler(bufferUsecase, logger)
 
-	// Alert channels
+	// Alert channels (with email verification + Resend mailer)
 	alertRepo := postgres.NewAlertChannelRepository(pool)
-	alertUsecase := usecase.NewAlertUsecase(alertRepo)
+	mailProvider := newMailer(cfg, logger)
+	verifySigner := emailverify.NewSigner([]byte(cfg.JWTSecret))
+	alertUsecase := usecase.NewAlertUsecase(alertRepo, mailProvider, verifySigner, cfg.AppBaseURL)
 	alertHandler := handler.NewAlertHandler(alertUsecase, logger)
 
 	// Analytics
@@ -141,6 +145,16 @@ func main() {
 	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("metrics server shutdown", "error", err)
 	}
+}
+
+// newMailer returns a Resend provider when RESEND_API_KEY is set, otherwise a
+// no-op provider (email channels can be created but nothing is sent).
+func newMailer(cfg *config.Config, logger *slog.Logger) mailer.Provider {
+	if cfg.ResendAPIKey == "" {
+		logger.Warn("RESEND_API_KEY unset — email alerts will be dropped (no-op mailer)")
+		return mailer.NewNoopProvider(logger)
+	}
+	return mailer.NewResendProvider(cfg.ResendAPIKey, cfg.AlertEmailFrom)
 }
 
 func newLogger(env string, level slog.Level) *slog.Logger {
