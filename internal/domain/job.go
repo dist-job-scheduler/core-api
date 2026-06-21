@@ -9,6 +9,8 @@ var (
 	ErrJobNotFound       = errors.New("job not found")
 	ErrDuplicateJob      = errors.New("job with this idempotency key already exists")
 	ErrInvalidStatus     = errors.New("invalid status value")
+	ErrInvalidMethod     = errors.New("invalid HTTP method filter")
+	ErrInvalidSearch     = errors.New("invalid search query")
 	ErrJobNotCancellable = errors.New("job is not in a cancellable state")
 	ErrJobNotReplayable  = errors.New("job is not in a replayable state")
 )

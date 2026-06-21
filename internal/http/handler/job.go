@@ -145,19 +145,39 @@ func (h *JobHandler) List(ctx *gin.Context) {
 		return
 	}
 
+	scheduledAfter, err := parseTimeFilter(ctx.Query("scheduled_after"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": errInvalidTimeFilter})
+		return
+	}
+	scheduledBefore, err := parseTimeFilter(ctx.Query("scheduled_before"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": errInvalidTimeFilter})
+		return
+	}
+
 	result, err := h.jobUsecase.ListJobs(ctx.Request.Context(), usecase.ListJobsInput{
-		UserID: ctx.GetString("userID"),
-		Status: ctx.Query("status"),
-		Cursor: ctx.Query("cursor"),
-		Limit:  limit,
+		UserID:          ctx.GetString("userID"),
+		Status:          ctx.Query("status"),
+		Cursor:          ctx.Query("cursor"),
+		Limit:           limit,
+		URLSearch:       ctx.Query("q"),
+		Method:          ctx.Query("method"),
+		ScheduledAfter:  scheduledAfter,
+		ScheduledBefore: scheduledBefore,
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrInvalidStatus) {
+		switch {
+		case errors.Is(err, domain.ErrInvalidStatus):
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": errInvalidStatus})
-			return
+		case errors.Is(err, domain.ErrInvalidMethod):
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": errInvalidMethod})
+		case errors.Is(err, domain.ErrInvalidSearch):
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": errInvalidSearch})
+		default:
+			h.logger.ErrorContext(ctx.Request.Context(), "list jobs", "error", err)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
 		}
-		h.logger.ErrorContext(ctx.Request.Context(), "list jobs", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": errInternalServer})
 		return
 	}
 

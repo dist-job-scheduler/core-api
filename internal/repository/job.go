@@ -13,6 +13,12 @@ type ListJobsInput struct {
 	CursorTime *time.Time    // nil = first page
 	CursorID   string        // used only when CursorTime is non-nil
 	Limit      int
+
+	// Optional search/filter predicates (validated in the usecase layer).
+	Method          string     // exact HTTP method; empty = all
+	URLSearch       string     // case-insensitive substring match on url; empty = no filter
+	ScheduledAfter  *time.Time // scheduled_at >= this; nil = no lower bound
+	ScheduledBefore *time.Time // scheduled_at <= this; nil = no upper bound
 }
 
 // UseCase depends on interface, not concrete implementation.
