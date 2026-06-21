@@ -165,9 +165,14 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 		return
 	}
 
+	// execCtx is the context the HTTP call runs under. The heartbeat goroutine
+	// fences it (cancels with errLeaseLost) if we can no longer prove we still
+	// hold this job — see heartbeat().
+	execCtx, cancelExec := context.WithCancelCause(ctx)
+	defer cancelExec(nil)
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	defer cancelHeartbeat()
-	go w.heartbeat(heartbeatCtx, job.ID)
+	go w.heartbeat(heartbeatCtx, job.ID, func() { cancelExec(errLeaseLost) })
 
 	var signingSecret string
 	secret, err := w.signingSecrets.GetActive(ctx, job.UserID)
@@ -180,8 +185,18 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 
 	w.logger.InfoContext(ctx, "executing job", "job_id", job.ID, "method", job.Method, "url", job.URL)
 
-	result := w.executor.Run(ctx, job, signingSecret)
+	result := w.executor.Run(execCtx, job, signingSecret)
 	durationMS := time.Since(startedAt).Milliseconds()
+
+	// If we lost our heartbeat lease mid-flight, the reaper now owns this job and
+	// may already have handed it to another worker. Relinquish silently: writing
+	// any outcome here would race the reaper and could double-increment
+	// retry_count or stomp another worker's result. The open attempt row stays
+	// completed_at=NULL — identical to a crash, and the reaper recovers the job.
+	if errors.Is(context.Cause(execCtx), errLeaseLost) {
+		w.logger.ErrorContext(ctx, "relinquished job after lease loss; reaper will recover", "job_id", job.ID)
+		return
+	}
 
 	// Deduct 1 credit for this execution attempt, regardless of outcome.
 	// Placed here (after HTTP call, before outcome branch) so we always charge
@@ -252,16 +267,45 @@ func (w *Worker) closeAttempt(ctx context.Context, attempt *domain.JobAttempt, s
 	}
 }
 
-func (w *Worker) heartbeat(ctx context.Context, jobID string) {
-	ticker := time.NewTicker(10 * time.Second)
+const (
+	heartbeatInterval = 10 * time.Second
+	// heartbeatLeaseTimeout is how long we keep executing without a successful
+	// heartbeat before fencing ourselves off. It must be < the reaper's stale
+	// cutoff (30s, see cmd/scheduler/main.go) so the current owner relinquishes
+	// the job BEFORE the reaper hands it to another worker — otherwise the target
+	// endpoint can get two concurrent deliveries. It also rides out brief blips
+	// (e.g. a Postgres failover, normally a few seconds) without aborting.
+	heartbeatLeaseTimeout = 20 * time.Second
+)
+
+// errLeaseLost is the cancellation cause when a worker fences its own in-flight
+// execution after failing to refresh the heartbeat lease.
+var errLeaseLost = errors.New("heartbeat lease lost")
+
+// heartbeat keeps heartbeat_at fresh so the reaper doesn't reschedule a job
+// we're still running. If it can't update for heartbeatLeaseTimeout, it calls
+// onLeaseLost to fence the in-flight execution and stops.
+func (w *Worker) heartbeat(ctx context.Context, jobID string, onLeaseLost func()) {
+	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
+	lastSuccess := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if err := w.repo.UpdateHeartbeat(ctx, jobID); err != nil {
-				w.logger.WarnContext(ctx, "heartbeat failed", "job_id", jobID, "error", err)
+				staleFor := time.Since(lastSuccess)
+				w.logger.WarnContext(ctx, "heartbeat failed", "job_id", jobID, "stale_for", staleFor, "error", err)
+				if staleFor >= heartbeatLeaseTimeout {
+					w.logger.ErrorContext(ctx, "heartbeat lease lost, fencing in-flight execution to avoid duplicate delivery",
+						"job_id", jobID, "stale_for", staleFor)
+					metrics.LeaseLostTotal.Inc()
+					onLeaseLost()
+					return
+				}
+			} else {
+				lastSuccess = time.Now()
 			}
 		}
 	}
