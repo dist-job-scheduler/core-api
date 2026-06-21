@@ -68,7 +68,20 @@ one-time `pg_repack` (online, no long lock) on `jobs`, `buffer_items`,
 `job_attempts` after deploy to compact what's already there. `VACUUM FULL` also
 works but takes an exclusive lock — avoid on the live scheduler.
 
-## Phase 2 — heartbeat sidecar (proposed, not yet implemented)
+## Phase 2 — heartbeat sidecar (jobs `20260614000001`, buffer_items `20260614000002`)
+
+Status: **done for both the jobs scheduler path and the buffer drainer path.**
+`buffer_item_heartbeats` mirrors `job_heartbeats` exactly (claim seeds it via a
+CTE; heartbeat is a HOT sidecar upsert; complete/fail/reschedule drop it; the
+reaper derives staleness via `LEFT JOIN`, a missing row counting as stale). The
+buffer change was validated end-to-end by the `crash.js` chaos test: SIGKILL the
+scheduler mid-flight → restart → reaper rescued every orphaned item to
+`completed`, zero loss.
+
+Measured on the migrated schema (50 running jobs × 360 beats/hr, autovacuum off
+to show raw churn): the old full-row heartbeat left **15.4k dead tuples / ~21 MB**
+of churn on `jobs`; the sidecar moves that to a **~1.5 MB** table (mostly HOT) and
+`jobs` now takes **zero** heartbeat writes.
 
 Move the volatile heartbeat out of the heavy row:
 
