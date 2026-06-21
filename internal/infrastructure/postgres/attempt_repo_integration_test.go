@@ -55,7 +55,7 @@ func TestAttemptRepo_CreateAndComplete(t *testing.T) {
 	// Complete the attempt
 	statusCode := 200
 	var durationMS int64 = 150
-	if err := attemptRepo.CompleteAttempt(ctx, attempt.ID, &statusCode, nil, durationMS); err != nil {
+	if err := attemptRepo.CompleteAttempt(ctx, attempt.ID, attempt.StartedAt, &statusCode, nil, durationMS); err != nil {
 		t.Fatalf("complete attempt: %v", err)
 	}
 }

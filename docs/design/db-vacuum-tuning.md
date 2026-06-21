@@ -108,11 +108,37 @@ sidecar, the reaper sees a stale/absent heartbeat and reschedules. This touches
 claim/heartbeat/reschedule/reaper, so it ships as its own PR with integration +
 crash tests. It is the change that actually removes the write-amplification.
 
-## Phase 3 — retention / partitioning (future)
+## Phase 3 — partition `job_attempts` by month (migration `20260614000003`)
 
-Range-partition `job_attempts` (and optionally completed `jobs`) by month so old
-data is dropped with `DROP PARTITION` (no vacuum cost) instead of `DELETE` (which
-generates more dead tuples). Keep hot partitions small → cheap autovacuum.
+Status: **done.** `job_attempts` is now `PARTITION BY RANGE (started_at)`, monthly,
+with a `DEFAULT` catch-all. PK is `(id, started_at)` and the unique guard is
+`(job_id, attempt_num, started_at)` (the partition key must be in every unique
+key). `CompleteAttempt` now passes `started_at`, so the completion UPDATE prunes
+to a single partition. The conversion migration renames the old table, frees the
+colliding constraint/index names, creates the partitioned table + partitions, and
+copies the data (validated: existing rows are preserved and routed to the right
+month). `job_attempts` has no inbound FKs, so this is clean.
+
+**Retention runbook.** Drop expired months instead of `DELETE` (instant, no dead
+tuples):
+
+```sql
+DROP TABLE job_attempts_2026_03;   -- e.g. keep the last N months
+```
+
+**Partition rotation (automated).** The scheduler runs a `PartitionMaintainer`
+(`internal/scheduler/partition.go`) that, every `PARTITION_MAINTAIN_INTERVAL_SEC`
+(default 6h), ensures the current month + `PARTITION_MONTHS_AHEAD` (default 3)
+partitions exist. **Creation is always on** so the `DEFAULT` partition stays
+empty and there's no future cliff. **Dropping is opt-in:** with
+`JOB_ATTEMPT_RETENTION_MONTHS = 0` (default) nothing is ever dropped — attempts
+are billing records, so retention is a deliberate policy. Set it > 0 to have the
+maintainer drop partitions older than that many months (logged at WARN). The
+manual `DROP TABLE job_attempts_YYYY_MM` runbook above still works for one-offs.
+
+**Operational note.** The conversion copies all rows under a lock for the copy's
+duration. `job_attempts` is small today; on a large table, run during a
+low-traffic window or migrate online (e.g. `pg_partman` + background copy).
 
 ## Benchmarks
 

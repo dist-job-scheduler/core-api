@@ -268,7 +268,7 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 
 // closeAttempt writes the execution outcome to the attempt record.
 func (w *Worker) closeAttempt(ctx context.Context, attempt *domain.JobAttempt, statusCode *int, errMsg *string, durationMS int64) {
-	if err := w.attempts.CompleteAttempt(ctx, attempt.ID, statusCode, errMsg, durationMS); err != nil {
+	if err := w.attempts.CompleteAttempt(ctx, attempt.ID, attempt.StartedAt, statusCode, errMsg, durationMS); err != nil {
 		w.logger.ErrorContext(ctx, "complete attempt record", "job_id", attempt.JobID, "error", err)
 	}
 }

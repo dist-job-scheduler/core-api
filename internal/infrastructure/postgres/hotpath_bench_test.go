@@ -98,7 +98,7 @@ func BenchmarkAttemptCreateComplete(b *testing.B) {
 		if err != nil {
 			b.Fatalf("create attempt: %v", err)
 		}
-		if err := attempts.CompleteAttempt(ctx, a.ID, &statusCode, nil, 12); err != nil {
+		if err := attempts.CompleteAttempt(ctx, a.ID, a.StartedAt, &statusCode, nil, 12); err != nil {
 			b.Fatalf("complete attempt: %v", err)
 		}
 	}

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,15 +28,17 @@ func (r *AttemptRepository) CreateAttempt(ctx context.Context, a *domain.JobAtte
 	return scanAttempt(row)
 }
 
-func (r *AttemptRepository) CompleteAttempt(ctx context.Context, id string, statusCode *int, errMsg *string, durationMS int64) error {
+func (r *AttemptRepository) CompleteAttempt(ctx context.Context, id string, startedAt time.Time, statusCode *int, errMsg *string, durationMS int64) error {
+	// started_at is the partition key — including it prunes the UPDATE to the one
+	// partition holding this attempt.
 	_, err := r.pool.Exec(ctx, `
 		UPDATE job_attempts
 		SET completed_at = NOW(),
-		    status_code  = $2,
-		    error        = $3,
-		    duration_ms  = $4
-		WHERE id = $1`,
-		id, statusCode, errMsg, durationMS,
+		    status_code  = $3,
+		    error        = $4,
+		    duration_ms  = $5
+		WHERE id = $1 AND started_at = $2`,
+		id, startedAt, statusCode, errMsg, durationMS,
 	)
 	if err != nil {
 		return fmt.Errorf("complete attempt: %w", err)

@@ -18,6 +18,12 @@ type Config struct {
 	DispatchIntervalSec  int  `env:"DISPATCH_INTERVAL_SEC" envDefault:"5" validate:"min=1,max=60"`
 	DrainerConcurrency   int  `env:"DRAINER_CONCURRENCY" envDefault:"10" validate:"min=1,max=100"`
 	DrainerPollIntervalSec int `env:"DRAINER_POLL_INTERVAL_SEC" envDefault:"1" validate:"min=1,max=10"`
+	// Partition maintenance for job_attempts (range-partitioned by month).
+	PartitionMaintainIntervalSec int `env:"PARTITION_MAINTAIN_INTERVAL_SEC" envDefault:"21600" validate:"min=60"`
+	PartitionMonthsAhead         int `env:"PARTITION_MONTHS_AHEAD" envDefault:"3" validate:"min=1,max=24"`
+	// 0 = keep all attempt history forever (default). >0 drops partitions older
+	// than this many months — opt-in because attempts are billing records.
+	JobAttemptRetentionMonths int `env:"JOB_ATTEMPT_RETENTION_MONTHS" envDefault:"0" validate:"min=0,max=120"`
 
 	MetricsPort string `env:"METRICS_PORT" envDefault:"9090"`
 	LogLevel    string `env:"LOG_LEVEL" envDefault:"info" validate:"required,oneof=debug info warn error"`
