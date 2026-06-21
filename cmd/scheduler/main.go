@@ -100,6 +100,13 @@ func main() {
 	bufferReaper := scheduler.NewBufferReaper(bufferRepo, logger, 30*time.Second, 30*time.Second)
 	go bufferReaper.Start(ctx)
 
+	partitionMaintainer := scheduler.NewPartitionMaintainer(
+		postgres.NewAttemptPartitionRepository(pool), logger,
+		time.Duration(cfg.PartitionMaintainIntervalSec)*time.Second,
+		cfg.PartitionMonthsAhead, cfg.JobAttemptRetentionMonths,
+	)
+	go partitionMaintainer.Start(ctx)
+
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)
 	go func() {
 		logger.Info("metrics server started", "port", cfg.MetricsPort)
