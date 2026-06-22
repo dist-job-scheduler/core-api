@@ -20,15 +20,19 @@ const resendEndpoint = "https://api.resend.com/emails"
 type ResendProvider struct {
 	apiKey string
 	from   string
-	client *http.Client
+	// endpoint is the Resend API URL. It defaults to resendEndpoint and is only
+	// overridden in tests to point Send at an httptest server.
+	endpoint string
+	client   *http.Client
 }
 
 // NewResendProvider returns a Provider backed by Resend. apiKey is the
 // RESEND_API_KEY secret; from is the verified sender address (ALERT_EMAIL_FROM).
 func NewResendProvider(apiKey, from string) *ResendProvider {
 	return &ResendProvider{
-		apiKey: apiKey,
-		from:   from,
+		apiKey:   apiKey,
+		from:     from,
+		endpoint: resendEndpoint,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
@@ -56,7 +60,7 @@ func (p *ResendProvider) Send(ctx context.Context, msg Email) error {
 		return fmt.Errorf("marshal resend request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resendEndpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build resend request: %w", err)
 	}
