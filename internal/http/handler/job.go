@@ -162,6 +162,7 @@ func (h *JobHandler) List(ctx *gin.Context) {
 		Cursor:          ctx.Query("cursor"),
 		Limit:           limit,
 		URLSearch:       ctx.Query("q"),
+		ErrorSearch:     ctx.Query("error_contains"),
 		Method:          ctx.Query("method"),
 		ScheduledAfter:  scheduledAfter,
 		ScheduledBefore: scheduledBefore,

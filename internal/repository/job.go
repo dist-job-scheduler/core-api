@@ -17,6 +17,7 @@ type ListJobsInput struct {
 	// Optional search/filter predicates (validated in the usecase layer).
 	Method          string     // exact HTTP method; empty = all
 	URLSearch       string     // case-insensitive substring match on url; empty = no filter
+	ErrorSearch     string     // case-insensitive substring match on last_error; empty = no filter
 	ScheduledAfter  *time.Time // scheduled_at >= this; nil = no lower bound
 	ScheduledBefore *time.Time // scheduled_at <= this; nil = no upper bound
 }

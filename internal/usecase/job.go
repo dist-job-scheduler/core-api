@@ -169,6 +169,7 @@ type ListJobsInput struct {
 
 	// Optional search/filter predicates. All combine with AND and with Status.
 	URLSearch       string     // case-insensitive substring match on the target URL
+	ErrorSearch     string     // case-insensitive substring match on the last error message
 	Method          string     // exact HTTP method (case-insensitive); empty = all
 	ScheduledAfter  *time.Time // scheduled_at >= this; nil = no lower bound
 	ScheduledBefore *time.Time // scheduled_at <= this; nil = no upper bound
@@ -246,11 +247,17 @@ func (u *JobUsecase) ListJobs(ctx context.Context, input ListJobsInput) (ListJob
 		return ListJobsResult{}, domain.ErrInvalidSearch
 	}
 
+	errorSearch := strings.TrimSpace(input.ErrorSearch)
+	if len(errorSearch) > maxSearchLen {
+		return ListJobsResult{}, domain.ErrInvalidSearch
+	}
+
 	repoInput := repository.ListJobsInput{
 		UserID:          input.UserID,
 		Status:          status,
 		Method:          method,
 		URLSearch:       search,
+		ErrorSearch:     errorSearch,
 		ScheduledAfter:  input.ScheduledAfter,
 		ScheduledBefore: input.ScheduledBefore,
 		Limit:           limit + 1,
