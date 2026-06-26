@@ -148,10 +148,14 @@ func (u *BufferUsecase) ListBuffers(ctx context.Context, input ListBuffersInput)
 
 	var nextCursor *string
 	if len(buffers) == limit+1 {
-		last := buffers[limit]
+		// Drop the sentinel row and build the cursor from the last row we
+		// actually return. The repo's keyset filter is strict (`< cursor`), so
+		// the cursor must point at the last returned row — using the sentinel
+		// would exclude it from the next page and silently drop it.
+		buffers = buffers[:limit]
+		last := buffers[limit-1]
 		s := encodeBufferCursor(last.CreatedAt, last.ID)
 		nextCursor = &s
-		buffers = buffers[:limit]
 	}
 
 	return ListBuffersResult{Buffers: buffers, NextCursor: nextCursor}, nil
@@ -371,10 +375,11 @@ func (u *BufferUsecase) ListItems(ctx context.Context, input ListBufferItemsInpu
 
 	var nextCursor *string
 	if len(items) == limit+1 {
-		last := items[limit]
+		// Cursor from the last returned row, not the sentinel — see ListBuffers.
+		items = items[:limit]
+		last := items[limit-1]
 		s := encodeBufferCursor(last.CreatedAt, last.ID)
 		nextCursor = &s
-		items = items[:limit]
 	}
 
 	return ListBufferItemsResult{Items: items, NextCursor: nextCursor}, nil
