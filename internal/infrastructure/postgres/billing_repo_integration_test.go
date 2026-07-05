@@ -121,6 +121,63 @@ func TestBillingRepo_TopUp(t *testing.T) {
 	}
 }
 
+func TestBillingRepo_TopUp_IdempotentOnPaymentIntent(t *testing.T) {
+	repo, userID := setupBillingRepo(t)
+	ctx := context.Background()
+
+	before, _ := repo.GetBalance(ctx, userID)
+
+	// Simulate Stripe redelivering the same checkout.session.completed twice.
+	if err := repo.TopUp(ctx, userID, 5000, "pi_dup_1"); err != nil {
+		t.Fatalf("first top up: %v", err)
+	}
+	if err := repo.TopUp(ctx, userID, 5000, "pi_dup_1"); err != nil {
+		t.Fatalf("redelivered top up should be a no-op, got: %v", err)
+	}
+
+	after, _ := repo.GetBalance(ctx, userID)
+	if after.Balance != before.Balance+5000 {
+		t.Fatalf("balance = %d, want %d (credited exactly once)", after.Balance, before.Balance+5000)
+	}
+
+	// Exactly one stripe_topup ledger row for this payment intent.
+	txs, _, err := repo.ListTransactions(ctx, userID, "", 100)
+	if err != nil {
+		t.Fatalf("list transactions: %v", err)
+	}
+	topups := 0
+	for _, tx := range txs {
+		if tx.Type == domain.CreditTxStripeTopup {
+			topups++
+		}
+	}
+	if topups != 1 {
+		t.Fatalf("stripe_topup rows = %d, want 1", topups)
+	}
+
+	// A different payment intent still credits independently.
+	if err := repo.TopUp(ctx, userID, 3000, "pi_dup_2"); err != nil {
+		t.Fatalf("distinct top up: %v", err)
+	}
+	after2, _ := repo.GetBalance(ctx, userID)
+	if after2.Balance != before.Balance+8000 {
+		t.Fatalf("balance = %d, want %d", after2.Balance, before.Balance+8000)
+	}
+
+	// Empty payment intents are NULL, excluded from the guard, so two of them
+	// both credit (no false-positive dedup).
+	if err := repo.TopUp(ctx, userID, 100, ""); err != nil {
+		t.Fatalf("empty-intent top up 1: %v", err)
+	}
+	if err := repo.TopUp(ctx, userID, 100, ""); err != nil {
+		t.Fatalf("empty-intent top up 2: %v", err)
+	}
+	after3, _ := repo.GetBalance(ctx, userID)
+	if after3.Balance != before.Balance+8200 {
+		t.Fatalf("balance = %d, want %d (empty intents not deduped)", after3.Balance, before.Balance+8200)
+	}
+}
+
 func TestBillingRepo_UpdatePlan(t *testing.T) {
 	repo, userID := setupBillingRepo(t)
 	ctx := context.Background()

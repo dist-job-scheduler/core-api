@@ -76,6 +76,35 @@ func TestGetBalance_Error(t *testing.T) {
 	}
 }
 
+func TestCreateCheckoutSession_RejectsOversizedCredits(t *testing.T) {
+	t.Parallel()
+
+	uc := newBillingUsecase(&testutil.MockCreditRepository{})
+
+	cases := []struct {
+		name    string
+		credits int64
+	}{
+		{"zero", 0},
+		{"negative", -5},
+		{"just over cap", 1_000_000_001},
+		// The overflow exploit: credits*100 wraps int64 to a tiny amountCents, so
+		// a $0.005 charge would otherwise mint ~4.6e18 credits. Must be rejected.
+		{"int64 overflow value", 4611686018427437904},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// stripe client is nil; a value that slips past the guard would panic
+			// on the customer lookup, so reaching an error return proves the guard
+			// fired first.
+			_, err := uc.CreateCheckoutSession(context.Background(), "user-1", tc.credits)
+			if err == nil {
+				t.Fatalf("expected rejection for credits=%d, got nil", tc.credits)
+			}
+		})
+	}
+}
+
 func TestListTransactions_DefaultLimit(t *testing.T) {
 	t.Parallel()
 

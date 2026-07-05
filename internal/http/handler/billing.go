@@ -51,7 +51,10 @@ func (h *BillingHandler) CreateCheckoutSession(c *gin.Context) {
 	userID := c.GetString("userID")
 
 	var req struct {
-		Credits int64 `json:"credits" binding:"required,min=1"`
+		// max caps a single purchase and, critically, keeps credits*100 far below
+		// the int64 ceiling so the price calculation cannot overflow and decouple
+		// the charged amount from the granted credits.
+		Credits int64 `json:"credits" binding:"required,min=1,max=1000000000"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": formatValidationError(err)})

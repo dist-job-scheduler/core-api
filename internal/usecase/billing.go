@@ -15,6 +15,13 @@ import (
 
 const stripeMinimumCents = 50 // Stripe enforces a $0.50 floor on USD charges
 
+// maxCheckoutCredits caps a single top-up. It is the authoritative business
+// limit (the HTTP binding mirrors it for a clean 400) and, more importantly, a
+// safety floor: at 1e9 credits, credits*100 = 1e11, four orders of magnitude
+// below math.MaxInt64, so the amountCents calculation below can never overflow
+// and mint credits decoupled from the amount actually charged.
+const maxCheckoutCredits = 1_000_000_000
+
 // BillingConfig holds the exchange rate and Stripe Checkout redirect URLs.
 type BillingConfig struct {
 	// CreditsPerDollar is the exchange rate (e.g. 1000 = 1000 credits per $1).
@@ -78,6 +85,9 @@ func (u *BillingUsecase) CreditsPerDollar() int64 {
 func (u *BillingUsecase) CreateCheckoutSession(ctx context.Context, userID string, credits int64) (string, error) {
 	if credits <= 0 {
 		return "", fmt.Errorf("credits must be positive")
+	}
+	if credits > maxCheckoutCredits {
+		return "", fmt.Errorf("credits must be at most %d per purchase", maxCheckoutCredits)
 	}
 
 	amountCents := (credits * 100) / u.config.CreditsPerDollar
