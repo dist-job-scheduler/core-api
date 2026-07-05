@@ -93,6 +93,38 @@ func TestSafeDial_ConnectsToValidatedIP(t *testing.T) {
 	}
 }
 
+// TestSafeDial_RacesToWorkingIP proves a dead address (e.g. a black-holed IPv6)
+// does not stop a working one from connecting — the dials race and the first
+// success wins, without waiting out the dead address's full timeout.
+func TestSafeDial_RacesToWorkingIP(t *testing.T) {
+	const deadIP = "203.0.113.1"  // fails immediately in the stub
+	const liveIP = "93.184.216.34" // succeeds in the stub
+
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+
+	withHooks(t,
+		func(_ context.Context, _ string) ([]net.IPAddr, error) {
+			return []net.IPAddr{{IP: net.ParseIP(deadIP)}, {IP: net.ParseIP(liveIP)}}, nil
+		},
+		func(_ *net.Dialer, ctx context.Context, _, addr string) (net.Conn, error) {
+			if addr == net.JoinHostPort(deadIP, "443") {
+				return nil, errors.New("connection refused")
+			}
+			return client, nil
+		},
+	)
+
+	dial := NewSafeDialContext(time.Second, time.Second)
+	conn, err := dial(context.Background(), "tcp", "example.com:443")
+	if err != nil {
+		t.Fatalf("expected a connection via the live IP, got error: %v", err)
+	}
+	if conn != client {
+		t.Fatal("expected the live IP's connection to be returned")
+	}
+}
+
 // TestSafeDial_RejectsRebindToBlockedIP: even if the hostname looks benign, a
 // resolution that includes a blocked IP is refused before any connection.
 func TestSafeDial_RejectsRebindToBlockedIP(t *testing.T) {
