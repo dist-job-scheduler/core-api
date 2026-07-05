@@ -115,6 +115,14 @@ func main() {
 	srv := http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, bufferHandler, alertHandler, statsHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins, rateLimiter),
+		// Bound how long a single connection may tie up server resources. Without
+		// these a slow client trickling headers/body (Slowloris) can hold
+		// connections open indefinitely and exhaust the single-instance API.
+		// Endpoints are fast CRUD, so these ceilings are generous.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)

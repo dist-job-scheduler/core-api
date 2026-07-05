@@ -15,6 +15,7 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
+	r.Use(middleware.BodyLimit(middleware.MaxRequestBodyBytes))
 	r.Use(middleware.CORS(corsAllowedOrigins))
 	r.Use(middleware.Security())
 	r.Use(sloggin.New(logger))
