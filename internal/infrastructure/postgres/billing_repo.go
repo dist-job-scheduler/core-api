@@ -10,6 +10,7 @@ import (
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/domain"
 	"github.com/ErlanBelekov/dist-job-scheduler/internal/repository"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -204,6 +205,14 @@ func (r *CreditRepo) deduct(ctx context.Context, userID string, txType domain.Cr
 	return crossing, nil
 }
 
+// TopUp adds credits and records a stripe_topup ledger row. It is idempotent on
+// stripePaymentIntentID: Stripe delivers webhooks at-least-once, so a redelivered
+// checkout.session.completed must not credit the same payment twice. The ledger
+// insert runs first with ON CONFLICT DO NOTHING against the partial unique index
+// on the payment intent; if it is a duplicate the balance is left untouched and
+// the call succeeds as a no-op. An empty payment intent is stored as NULL (rare,
+// and excluded from the uniqueness guard) so distinct no-intent events don't
+// collide with each other.
 func (r *CreditRepo) TopUp(ctx context.Context, userID string, amount int64, stripePaymentIntentID string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -215,6 +224,32 @@ func (r *CreditRepo) TopUp(ctx context.Context, userID string, amount int64, str
 		}
 	}()
 
+	var paymentIntent any
+	if stripePaymentIntentID != "" {
+		paymentIntent = stripePaymentIntentID
+	}
+
+	var tag pgconn.CommandTag
+	tag, err = tx.Exec(ctx,
+		`INSERT INTO credit_transactions (user_id, amount, type, stripe_payment_intent_id)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (stripe_payment_intent_id)
+		     WHERE type = 'stripe_topup' AND stripe_payment_intent_id IS NOT NULL
+		 DO NOTHING`,
+		userID, amount, domain.CreditTxStripeTopup, paymentIntent,
+	)
+	if err != nil {
+		return fmt.Errorf("insert topup tx: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Duplicate delivery for this payment intent — already credited. Commit
+		// the empty transaction and report success so the webhook is acked.
+		if err = tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+		return nil
+	}
+
 	_, err = tx.Exec(ctx,
 		`UPDATE user_credits
 		 SET balance = balance + $2, low_balance_notified = FALSE, updated_at = NOW()
@@ -223,15 +258,6 @@ func (r *CreditRepo) TopUp(ctx context.Context, userID string, amount int64, str
 	)
 	if err != nil {
 		return fmt.Errorf("top up credits: %w", err)
-	}
-
-	_, err = tx.Exec(ctx,
-		`INSERT INTO credit_transactions (user_id, amount, type, stripe_payment_intent_id)
-		 VALUES ($1, $2, $3, $4)`,
-		userID, amount, domain.CreditTxStripeTopup, stripePaymentIntentID,
-	)
-	if err != nil {
-		return fmt.Errorf("insert topup tx: %w", err)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
