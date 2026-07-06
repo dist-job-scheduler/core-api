@@ -40,18 +40,20 @@ func (m *FakeMailer) Messages() []mailer.Email {
 // ---------- MockJobRepository ----------
 
 type MockJobRepository struct {
-	CreateFn           func(ctx context.Context, job *domain.Job) (*domain.Job, error)
-	GetByIDFn          func(ctx context.Context, jobID, userID string) (*domain.Job, error)
-	ListJobsFn         func(ctx context.Context, input repository.ListJobsInput) ([]*domain.Job, error)
-	CancelFn           func(ctx context.Context, jobID, userID string) error
-	ClaimFn            func(ctx context.Context, workerID string, limit int) ([]*domain.Job, error)
-	UpdateHeartbeatFn  func(ctx context.Context, jobID string) error
-	CompleteFn         func(ctx context.Context, jobID string) error
-	FailFn             func(ctx context.Context, jobID string, lastError string) error
-	RescheduleFn       func(ctx context.Context, jobID string, lastError string, retryAt time.Time) error
-	ReschedulesStaleFn func(ctx context.Context, staleCutoff time.Time, limit int) (int, error)
-	FailStaleFn        func(ctx context.Context, staleCutoff time.Time, limit int) (int, error)
-	ListByScheduleIDFn func(ctx context.Context, scheduleID string, limit int, cursorTime *time.Time, cursorID string) ([]*domain.Job, error)
+	CreateFn              func(ctx context.Context, job *domain.Job) (*domain.Job, error)
+	GetByIDFn             func(ctx context.Context, jobID, userID string) (*domain.Job, error)
+	ListJobsFn            func(ctx context.Context, input repository.ListJobsInput) ([]*domain.Job, error)
+	CancelFn              func(ctx context.Context, jobID, userID string) error
+	ClaimFn               func(ctx context.Context, workerID string, limit int) ([]*domain.Job, error)
+	UpdateHeartbeatFn     func(ctx context.Context, jobID string) error
+	CompleteFn            func(ctx context.Context, jobID string) error
+	FailFn                func(ctx context.Context, jobID string, lastError string) error
+	CompleteWithWebhookFn func(ctx context.Context, jobID string, delivery *domain.WebhookDelivery) error
+	FailWithWebhookFn     func(ctx context.Context, jobID string, lastError string, delivery *domain.WebhookDelivery) error
+	RescheduleFn          func(ctx context.Context, jobID string, lastError string, retryAt time.Time) error
+	ReschedulesStaleFn    func(ctx context.Context, staleCutoff time.Time, limit int) (int, error)
+	FailStaleFn           func(ctx context.Context, staleCutoff time.Time, limit int) (int, error)
+	ListByScheduleIDFn    func(ctx context.Context, scheduleID string, limit int, cursorTime *time.Time, cursorID string) ([]*domain.Job, error)
 }
 
 func (m *MockJobRepository) Create(ctx context.Context, job *domain.Job) (*domain.Job, error) {
@@ -108,6 +110,20 @@ func (m *MockJobRepository) Complete(ctx context.Context, jobID string) error {
 func (m *MockJobRepository) Fail(ctx context.Context, jobID string, lastError string) error {
 	if m.FailFn != nil {
 		return m.FailFn(ctx, jobID, lastError)
+	}
+	return nil
+}
+
+func (m *MockJobRepository) CompleteWithWebhook(ctx context.Context, jobID string, delivery *domain.WebhookDelivery) error {
+	if m.CompleteWithWebhookFn != nil {
+		return m.CompleteWithWebhookFn(ctx, jobID, delivery)
+	}
+	return nil
+}
+
+func (m *MockJobRepository) FailWithWebhook(ctx context.Context, jobID string, lastError string, delivery *domain.WebhookDelivery) error {
+	if m.FailWithWebhookFn != nil {
+		return m.FailWithWebhookFn(ctx, jobID, lastError, delivery)
 	}
 	return nil
 }

@@ -85,7 +85,6 @@ func TestWorker_Start_PollsOnInterval(t *testing.T) {
 			credits:        &testutil.MockCreditRepository{},
 			signingSecrets: &testutil.MockSigningSecretRepository{},
 			executor:       NewExecutor(slog.Default()),
-			deliveries:     &testutil.MockWebhookDeliveryRepository{},
 			logger:         slog.Default(),
 			pollInterval:   5 * time.Second,
 			concurrency:    10,
