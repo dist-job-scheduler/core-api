@@ -16,17 +16,19 @@ import (
 // fakeDeliverer returns a scripted (statusCode, err) for every Deliver call and
 // records how many times and with what body it was invoked.
 type fakeDeliverer struct {
-	mu       sync.Mutex
-	code     int
-	err      error
-	calls    int32
-	lastBody []byte
+	mu          sync.Mutex
+	code        int
+	err         error
+	calls       int32
+	lastBody    []byte
+	lastHeaders map[string]string
 }
 
-func (f *fakeDeliverer) Deliver(_ context.Context, _ string, _ string, _ map[string]string, body []byte) (int, error) {
+func (f *fakeDeliverer) Deliver(_ context.Context, _ string, _ string, headers map[string]string, body []byte) (int, error) {
 	atomic.AddInt32(&f.calls, 1)
 	f.mu.Lock()
 	f.lastBody = body
+	f.lastHeaders = headers
 	f.mu.Unlock()
 	return f.code, f.err
 }
@@ -71,11 +73,19 @@ func TestWebhookDispatcher_DeliverOne_Success(t *testing.T) {
 			return nil
 		},
 	}
-	d := NewWebhookDispatcher(repo, &fakeDeliverer{code: 202}, slog.Default(), time.Second)
-	d.deliverOne(context.Background(), &domain.WebhookDelivery{ID: "d1", Attempts: 0, MaxAttempts: 5})
+	deliverer := &fakeDeliverer{code: 202}
+	d := NewWebhookDispatcher(repo, deliverer, slog.Default(), time.Second)
+	d.deliverOne(context.Background(), &domain.WebhookDelivery{ID: "d1", Attempts: 0, MaxAttempts: 5, Headers: map[string]string{"X-A": "b"}})
 
 	if gotID != "d1" || gotCode != 202 {
 		t.Fatalf("MarkDelivered(id=%q, code=%d), want (d1, 202)", gotID, gotCode)
+	}
+	// The delivery id is advertised for consumer dedup, without dropping user headers.
+	if deliverer.lastHeaders["X-Fliq-Delivery-Id"] != "d1" {
+		t.Errorf("X-Fliq-Delivery-Id = %q, want d1", deliverer.lastHeaders["X-Fliq-Delivery-Id"])
+	}
+	if deliverer.lastHeaders["X-A"] != "b" {
+		t.Errorf("user header X-A dropped: %v", deliverer.lastHeaders)
 	}
 }
 

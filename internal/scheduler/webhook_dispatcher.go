@@ -91,6 +91,14 @@ func (d *WebhookDispatcher) dispatchBatch(ctx context.Context) {
 		wg.Add(1)
 		go func(del *domain.WebhookDelivery) {
 			defer wg.Done()
+			// A panic in one delivery must not take down the scheduler process
+			// (it also hosts the worker, reaper, and drainers). The row stays
+			// 'delivering' and is reclaimed after the in-flight timeout.
+			defer func() {
+				if r := recover(); r != nil {
+					d.logger.ErrorContext(ctx, "webhook delivery panicked", "delivery_id", del.ID, "panic", r)
+				}
+			}()
 			d.deliverOne(ctx, del)
 		}(del)
 	}
@@ -98,7 +106,16 @@ func (d *WebhookDispatcher) dispatchBatch(ctx context.Context) {
 }
 
 func (d *WebhookDispatcher) deliverOne(ctx context.Context, del *domain.WebhookDelivery) {
-	statusCode, err := d.deliverer.Deliver(ctx, del.UserID, del.URL, del.Headers, del.Payload)
+	// Advertise the delivery id so consumers can dedup at-least-once retries of the
+	// same delivery (the body is identical across attempts). Copy the map so the
+	// per-delivery header never leaks into the shared row value.
+	headers := make(map[string]string, len(del.Headers)+1)
+	for k, v := range del.Headers {
+		headers[k] = v
+	}
+	headers["X-Fliq-Delivery-Id"] = del.ID
+
+	statusCode, err := d.deliverer.Deliver(ctx, del.UserID, del.URL, headers, del.Payload)
 
 	var scPtr *int
 	if statusCode != 0 {
