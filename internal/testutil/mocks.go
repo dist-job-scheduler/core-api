@@ -615,3 +615,59 @@ func (m *MockSigningSecretRepository) Rotate(ctx context.Context, userID string)
 	}
 	return &domain.SigningSecret{ID: "sig-1", UserID: userID, Secret: "test-secret-32chars-for-signing!", IsActive: true, CreatedAt: time.Now()}, nil
 }
+
+// ---------- MockWebhookDeliveryRepository ----------
+
+type MockWebhookDeliveryRepository struct {
+	EnqueueFn       func(ctx context.Context, d *domain.WebhookDelivery) (*domain.WebhookDelivery, error)
+	ClaimDueFn      func(ctx context.Context, limit int, inflightTimeout time.Duration) ([]*domain.WebhookDelivery, error)
+	MarkDeliveredFn func(ctx context.Context, id string, statusCode int) error
+	RescheduleFn    func(ctx context.Context, id string, statusCode *int, lastErr string, nextRetryAt time.Time) error
+	MarkFailedFn    func(ctx context.Context, id string, statusCode *int, lastErr string) error
+	ListByUserFn    func(ctx context.Context, userID string, limit int, cursorTime *time.Time, cursorID string) ([]*domain.WebhookDelivery, error)
+}
+
+func (m *MockWebhookDeliveryRepository) Enqueue(ctx context.Context, d *domain.WebhookDelivery) (*domain.WebhookDelivery, error) {
+	if m.EnqueueFn != nil {
+		return m.EnqueueFn(ctx, d)
+	}
+	if d.ID == "" {
+		d.ID = "delivery-1"
+	}
+	return d, nil
+}
+
+func (m *MockWebhookDeliveryRepository) ClaimDue(ctx context.Context, limit int, inflightTimeout time.Duration) ([]*domain.WebhookDelivery, error) {
+	if m.ClaimDueFn != nil {
+		return m.ClaimDueFn(ctx, limit, inflightTimeout)
+	}
+	return nil, nil
+}
+
+func (m *MockWebhookDeliveryRepository) MarkDelivered(ctx context.Context, id string, statusCode int) error {
+	if m.MarkDeliveredFn != nil {
+		return m.MarkDeliveredFn(ctx, id, statusCode)
+	}
+	return nil
+}
+
+func (m *MockWebhookDeliveryRepository) Reschedule(ctx context.Context, id string, statusCode *int, lastErr string, nextRetryAt time.Time) error {
+	if m.RescheduleFn != nil {
+		return m.RescheduleFn(ctx, id, statusCode, lastErr, nextRetryAt)
+	}
+	return nil
+}
+
+func (m *MockWebhookDeliveryRepository) MarkFailed(ctx context.Context, id string, statusCode *int, lastErr string) error {
+	if m.MarkFailedFn != nil {
+		return m.MarkFailedFn(ctx, id, statusCode, lastErr)
+	}
+	return nil
+}
+
+func (m *MockWebhookDeliveryRepository) ListByUser(ctx context.Context, userID string, limit int, cursorTime *time.Time, cursorID string) ([]*domain.WebhookDelivery, error) {
+	if m.ListByUserFn != nil {
+		return m.ListByUserFn(ctx, userID, limit, cursorTime, cursorID)
+	}
+	return nil, nil
+}

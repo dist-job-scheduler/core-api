@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,49 +18,52 @@ import (
 )
 
 type Worker struct {
-	id             string
-	repo           repository.JobRepository
-	attempts       repository.AttemptRepository
-	credits        repository.CreditRepository
-	signingSecrets repository.SigningSecretRepository
-	executor       *Executor
-	notifier       *WebhookNotifier
-	alerts         *AlertNotifier
-	lowBalance     LowBalanceConfig
-	logger         *slog.Logger
-	pollInterval   time.Duration
-	concurrency    int
-	sem            chan struct{}
+	id                 string
+	repo               repository.JobRepository
+	attempts           repository.AttemptRepository
+	credits            repository.CreditRepository
+	signingSecrets     repository.SigningSecretRepository
+	executor           *Executor
+	deliveries         repository.WebhookDeliveryRepository
+	alerts             *AlertNotifier
+	lowBalance         LowBalanceConfig
+	logger             *slog.Logger
+	pollInterval       time.Duration
+	concurrency        int
+	webhookMaxAttempts int
+	sem                chan struct{}
 }
 
 func NewWorker(
 	repo repository.JobRepository,
 	attempts repository.AttemptRepository,
 	credits repository.CreditRepository,
-	notifier *WebhookNotifier,
+	deliveries repository.WebhookDeliveryRepository,
 	alerts *AlertNotifier,
 	lowBalance LowBalanceConfig,
 	logger *slog.Logger,
 	pollInterval time.Duration,
 	concurrency int,
+	webhookMaxAttempts int,
 	signingSecrets repository.SigningSecretRepository,
 ) *Worker {
 	hostname, _ := os.Hostname()
 	id := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 	return &Worker{
-		id:             id,
-		repo:           repo,
-		attempts:       attempts,
-		credits:        credits,
-		signingSecrets: signingSecrets,
-		executor:       NewExecutor(logger),
-		notifier:       notifier,
-		alerts:         alerts,
-		lowBalance:     lowBalance,
-		logger:         logger.With("worker_id", id),
-		pollInterval:   pollInterval,
-		concurrency:    concurrency,
-		sem:            make(chan struct{}, concurrency),
+		id:                 id,
+		repo:               repo,
+		attempts:           attempts,
+		credits:            credits,
+		signingSecrets:     signingSecrets,
+		executor:           NewExecutor(logger),
+		deliveries:         deliveries,
+		alerts:             alerts,
+		lowBalance:         lowBalance,
+		logger:             logger.With("worker_id", id),
+		pollInterval:       pollInterval,
+		concurrency:        concurrency,
+		webhookMaxAttempts: webhookMaxAttempts,
+		sem:                make(chan struct{}, concurrency),
 	}
 }
 
@@ -76,6 +80,49 @@ func (w *Worker) alertJobFailure(ctx context.Context, job *domain.Job, statusCod
 		Attempts:     job.RetryCount + 1,
 		FailedAt:     time.Now(),
 	})
+}
+
+// enqueueWebhook durably records a webhook delivery for a terminal job state. The
+// actual HTTP POST (and its retries) happen off this path, in WebhookDispatcher —
+// so a slow or hanging customer URL can never stall job execution. The row is the
+// unit of at-least-once delivery: once written, the dispatcher owns it. A nil
+// WebhookURL is a no-op; an enqueue failure is logged, never fatal to the job.
+func (w *Worker) enqueueWebhook(ctx context.Context, job *domain.Job, event domain.WebhookEvent, statusCode *int) {
+	if job.WebhookURL == nil {
+		return
+	}
+
+	completedAt := time.Now().UTC().Format(time.RFC3339)
+	if job.CompletedAt != nil {
+		completedAt = job.CompletedAt.UTC().Format(time.RFC3339)
+	}
+
+	body, err := json.Marshal(WebhookPayload{
+		Event:       string(event),
+		JobID:       job.ID,
+		Status:      string(job.Status),
+		StatusCode:  statusCode,
+		LastError:   job.LastError,
+		CompletedAt: completedAt,
+		AttemptNum:  job.RetryCount + 1,
+	})
+	if err != nil {
+		w.logger.ErrorContext(ctx, "marshal webhook payload", "job_id", job.ID, "error", err)
+		return
+	}
+
+	jobID := job.ID
+	if _, err := w.deliveries.Enqueue(ctx, &domain.WebhookDelivery{
+		UserID:      job.UserID,
+		JobID:       &jobID,
+		Event:       event,
+		URL:         *job.WebhookURL,
+		Headers:     job.WebhookHeaders,
+		Payload:     body,
+		MaxAttempts: w.webhookMaxAttempts,
+	}); err != nil {
+		w.logger.ErrorContext(ctx, "enqueue webhook delivery", "job_id", job.ID, "error", err)
+	}
 }
 
 func (w *Worker) Start(ctx context.Context) {
@@ -162,7 +209,7 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 		}
 		job.Status = domain.StatusFailed
 		job.LastError = &errMsg
-		w.notifier.notifyAsync(ctx, job, nil)
+		w.enqueueWebhook(ctx, job, domain.WebhookEventJobFailed, nil)
 		w.alertJobFailure(ctx, job, nil, errMsg)
 		w.logger.WarnContext(ctx, "job permanently failed: insufficient credits", "job_id", job.ID)
 		return
@@ -221,7 +268,7 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 			w.logger.ErrorContext(ctx, "mark job complete", "job_id", job.ID, "error", err)
 		}
 		job.Status = domain.StatusCompleted
-		w.notifier.notifyAsync(ctx, job, &result.StatusCode)
+		w.enqueueWebhook(ctx, job, domain.WebhookEventJobCompleted, &result.StatusCode)
 		w.logger.InfoContext(ctx, "job completed", "job_id", job.ID, "duration", result.Duration)
 		return
 	}
@@ -259,7 +306,7 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 		}
 		job.Status = domain.StatusFailed
 		job.LastError = &errMsg
-		w.notifier.notifyAsync(ctx, job, statusCode)
+		w.enqueueWebhook(ctx, job, domain.WebhookEventJobFailed, statusCode)
 		w.alertJobFailure(ctx, job, statusCode, errMsg)
 		metrics.JobsCompletedTotal.WithLabelValues("failed").Inc()
 		w.logger.WarnContext(ctx, "job permanently failed", "job_id", job.ID, "error", errMsg)

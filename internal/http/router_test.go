@@ -23,7 +23,7 @@ func buildRouter(t *testing.T) *gin.Engine {
 	t.Cleanup(rl.Stop)
 	return httptransport.NewRouter(
 		slog.Default(),
-		nil, nil, nil, nil, nil, nil, nil, nil, // handlers
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, // handlers
 		nil, nil, nil, // userRepo, creditRepo, tokenRepo
 		"", []byte("test-key"), "", rl,
 	)
@@ -65,6 +65,7 @@ func TestRouter_NewRoutesRequireAuth(t *testing.T) {
 		{http.MethodGet, "/alerts"},
 		{http.MethodPatch, "/alerts/abc"},
 		{http.MethodDelete, "/alerts/abc"},
+		{http.MethodGet, "/webhooks/deliveries"},
 	}
 	for _, c := range cases {
 		w := httptest.NewRecorder()

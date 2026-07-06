@@ -51,6 +51,7 @@ func main() {
 
 	signingRepo := postgres.NewSigningSecretRepository(pool)
 	alertRepo := postgres.NewAlertChannelRepository(pool)
+	webhookDeliveryRepo := postgres.NewWebhookDeliveryRepository(pool)
 
 	var mailProvider mailer.Provider
 	if cfg.ResendAPIKey == "" {
@@ -72,15 +73,25 @@ func main() {
 		jobRepo,
 		attemptRepo,
 		creditRepo,
-		notifier,
+		webhookDeliveryRepo,
 		alertNotifier,
 		lowBalance,
 		logger,
 		time.Duration(cfg.PollIntervalSec)*time.Second,
 		cfg.WorkerCount,
+		cfg.WebhookMaxAttempts,
 		signingRepo,
 	)
 	go worker.Start(ctx)
+
+	// Drains the durable webhook_deliveries queue: POSTs each due delivery and
+	// retries with backoff, off the worker path so a slow customer URL never
+	// stalls job execution.
+	webhookDispatcher := scheduler.NewWebhookDispatcher(
+		webhookDeliveryRepo, notifier, logger,
+		time.Duration(cfg.WebhookDispatchIntervalSec)*time.Second,
+	)
+	go webhookDispatcher.Start(ctx)
 
 	// heartbeat fires every 10s — 30s timeout means 3 missed beats before a job is stale
 	reaper := scheduler.NewReaper(jobRepo, logger, 30*time.Second, 30*time.Second)
