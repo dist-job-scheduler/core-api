@@ -35,6 +35,11 @@ type JobRepository interface {
 	UpdateHeartbeat(ctx context.Context, jobID string) error
 	Complete(ctx context.Context, jobID string) error
 	Fail(ctx context.Context, jobID string, lastError string) error
+	// CompleteWithWebhook / FailWithWebhook mark the job terminal and, when the
+	// delivery is non-nil, insert the outbound webhook row in the same transaction
+	// (the outbox pattern). A nil delivery is equivalent to Complete / Fail.
+	CompleteWithWebhook(ctx context.Context, jobID string, delivery *domain.WebhookDelivery) error
+	FailWithWebhook(ctx context.Context, jobID string, lastError string, delivery *domain.WebhookDelivery) error
 	Reschedule(ctx context.Context, jobID string, lastError string, retryAt time.Time) error
 
 	// Reaper methods — recover jobs from crashed workers

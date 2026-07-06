@@ -26,6 +26,13 @@ const deliveryColumns = `id, user_id, job_id, event, url, headers, payload,
 	delivered_at, created_at, updated_at`
 
 func (r *WebhookDeliveryRepository) Enqueue(ctx context.Context, d *domain.WebhookDelivery) (*domain.WebhookDelivery, error) {
+	return insertWebhookDelivery(ctx, r.pool, d)
+}
+
+// insertWebhookDelivery inserts a pending delivery using any querier — the pool
+// (Enqueue) or a transaction (JobRepository.CompleteWithWebhook / FailWithWebhook,
+// where the insert must commit atomically with the job's terminal transition).
+func insertWebhookDelivery(ctx context.Context, q querier, d *domain.WebhookDelivery) (*domain.WebhookDelivery, error) {
 	headers := d.Headers
 	if headers == nil {
 		headers = map[string]string{}
@@ -40,7 +47,7 @@ func (r *WebhookDeliveryRepository) Enqueue(ctx context.Context, d *domain.Webho
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING ` + deliveryColumns
 
-	row := r.pool.QueryRow(ctx, query,
+	row := q.QueryRow(ctx, query,
 		d.UserID, d.JobID, string(d.Event), d.URL, headers, string(d.Payload), maxAttempts)
 	return scanWebhookDelivery(row)
 }

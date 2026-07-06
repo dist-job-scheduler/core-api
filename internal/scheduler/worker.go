@@ -24,7 +24,6 @@ type Worker struct {
 	credits            repository.CreditRepository
 	signingSecrets     repository.SigningSecretRepository
 	executor           *Executor
-	deliveries         repository.WebhookDeliveryRepository
 	alerts             *AlertNotifier
 	lowBalance         LowBalanceConfig
 	logger             *slog.Logger
@@ -38,7 +37,6 @@ func NewWorker(
 	repo repository.JobRepository,
 	attempts repository.AttemptRepository,
 	credits repository.CreditRepository,
-	deliveries repository.WebhookDeliveryRepository,
 	alerts *AlertNotifier,
 	lowBalance LowBalanceConfig,
 	logger *slog.Logger,
@@ -56,7 +54,6 @@ func NewWorker(
 		credits:            credits,
 		signingSecrets:     signingSecrets,
 		executor:           NewExecutor(logger),
-		deliveries:         deliveries,
 		alerts:             alerts,
 		lowBalance:         lowBalance,
 		logger:             logger.With("worker_id", id),
@@ -82,14 +79,16 @@ func (w *Worker) alertJobFailure(ctx context.Context, job *domain.Job, statusCod
 	})
 }
 
-// enqueueWebhook durably records a webhook delivery for a terminal job state. The
-// actual HTTP POST (and its retries) happen off this path, in WebhookDispatcher —
-// so a slow or hanging customer URL can never stall job execution. The row is the
-// unit of at-least-once delivery: once written, the dispatcher owns it. A nil
-// WebhookURL is a no-op; an enqueue failure is logged, never fatal to the job.
-func (w *Worker) enqueueWebhook(ctx context.Context, job *domain.Job, event domain.WebhookEvent, statusCode *int) {
+// buildDelivery constructs the durable webhook delivery for a terminal job state,
+// or returns nil when the job has no webhook_url. The row is written in the same
+// transaction as the job's terminal transition (CompleteWithWebhook /
+// FailWithWebhook), so a crash can't leave a terminal job without its delivery.
+// The actual HTTP POST + retries happen off this path, in WebhookDispatcher, so a
+// slow customer URL never stalls job execution. Call with job.Status already set
+// to the terminal state so the payload reflects it.
+func (w *Worker) buildDelivery(ctx context.Context, job *domain.Job, event domain.WebhookEvent, statusCode *int) *domain.WebhookDelivery {
 	if job.WebhookURL == nil {
-		return
+		return nil
 	}
 
 	completedAt := time.Now().UTC().Format(time.RFC3339)
@@ -107,12 +106,14 @@ func (w *Worker) enqueueWebhook(ctx context.Context, job *domain.Job, event doma
 		AttemptNum:  job.RetryCount + 1,
 	})
 	if err != nil {
+		// A payload we can't marshal can't be delivered; log and skip the webhook
+		// rather than blocking the job's terminal transition.
 		w.logger.ErrorContext(ctx, "marshal webhook payload", "job_id", job.ID, "error", err)
-		return
+		return nil
 	}
 
 	jobID := job.ID
-	if _, err := w.deliveries.Enqueue(ctx, &domain.WebhookDelivery{
+	return &domain.WebhookDelivery{
 		UserID:      job.UserID,
 		JobID:       &jobID,
 		Event:       event,
@@ -120,8 +121,6 @@ func (w *Worker) enqueueWebhook(ctx context.Context, job *domain.Job, event doma
 		Headers:     job.WebhookHeaders,
 		Payload:     body,
 		MaxAttempts: w.webhookMaxAttempts,
-	}); err != nil {
-		w.logger.ErrorContext(ctx, "enqueue webhook delivery", "job_id", job.ID, "error", err)
 	}
 }
 
@@ -204,12 +203,11 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 	} else if !ok {
 		errMsg := "insufficient credits"
 		w.closeAttempt(ctx, attempt, nil, &errMsg, time.Since(startedAt).Milliseconds())
-		if failErr := w.repo.Fail(ctx, job.ID, errMsg); failErr != nil {
-			w.logger.ErrorContext(ctx, "mark job failed (no credits)", "job_id", job.ID, "error", failErr)
-		}
 		job.Status = domain.StatusFailed
 		job.LastError = &errMsg
-		w.enqueueWebhook(ctx, job, domain.WebhookEventJobFailed, nil)
+		if failErr := w.repo.FailWithWebhook(ctx, job.ID, errMsg, w.buildDelivery(ctx, job, domain.WebhookEventJobFailed, nil)); failErr != nil {
+			w.logger.ErrorContext(ctx, "mark job failed (no credits)", "job_id", job.ID, "error", failErr)
+		}
 		w.alertJobFailure(ctx, job, nil, errMsg)
 		w.logger.WarnContext(ctx, "job permanently failed: insufficient credits", "job_id", job.ID)
 		return
@@ -264,11 +262,10 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 		metrics.JobExecutionDuration.WithLabelValues("success").Observe(result.Duration.Seconds())
 		metrics.JobsCompletedTotal.WithLabelValues("success").Inc()
 		w.closeAttempt(ctx, attempt, &result.StatusCode, nil, durationMS)
-		if err := w.repo.Complete(ctx, job.ID); err != nil {
+		job.Status = domain.StatusCompleted
+		if err := w.repo.CompleteWithWebhook(ctx, job.ID, w.buildDelivery(ctx, job, domain.WebhookEventJobCompleted, &result.StatusCode)); err != nil {
 			w.logger.ErrorContext(ctx, "mark job complete", "job_id", job.ID, "error", err)
 		}
-		job.Status = domain.StatusCompleted
-		w.enqueueWebhook(ctx, job, domain.WebhookEventJobCompleted, &result.StatusCode)
 		w.logger.InfoContext(ctx, "job completed", "job_id", job.ID, "duration", result.Duration)
 		return
 	}
@@ -301,12 +298,11 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) {
 			"retry_at", retryAt,
 		)
 	} else {
-		if err := w.repo.Fail(ctx, job.ID, errMsg); err != nil {
-			w.logger.ErrorContext(ctx, "mark job failed", "job_id", job.ID, "error", err)
-		}
 		job.Status = domain.StatusFailed
 		job.LastError = &errMsg
-		w.enqueueWebhook(ctx, job, domain.WebhookEventJobFailed, statusCode)
+		if err := w.repo.FailWithWebhook(ctx, job.ID, errMsg, w.buildDelivery(ctx, job, domain.WebhookEventJobFailed, statusCode)); err != nil {
+			w.logger.ErrorContext(ctx, "mark job failed", "job_id", job.ID, "error", err)
+		}
 		w.alertJobFailure(ctx, job, statusCode, errMsg)
 		metrics.JobsCompletedTotal.WithLabelValues("failed").Inc()
 		w.logger.WarnContext(ctx, "job permanently failed", "job_id", job.ID, "error", errMsg)

@@ -101,17 +101,11 @@ func TestWebhookNotifier_Deliver_UnsignedWhenNoSecret(t *testing.T) {
 	}
 }
 
-// enqueueWebhook writes exactly one durable delivery row with the right shape when
-// the job carries a webhook URL, and writes nothing when it doesn't.
-func TestWorker_EnqueueWebhook(t *testing.T) {
-	var captured *domain.WebhookDelivery
-	repo := &testutil.MockWebhookDeliveryRepository{
-		EnqueueFn: func(_ context.Context, d *domain.WebhookDelivery) (*domain.WebhookDelivery, error) {
-			captured = d
-			return d, nil
-		},
-	}
-	w := &Worker{deliveries: repo, webhookMaxAttempts: 7, logger: slog.Default()}
+// buildDelivery returns a correctly-shaped delivery when the job carries a webhook
+// URL, and nil when it doesn't. The row is inserted atomically with the job's
+// terminal transition (CompleteWithWebhook/FailWithWebhook), tested at the repo layer.
+func TestWorker_BuildDelivery(t *testing.T) {
+	w := &Worker{webhookMaxAttempts: 7, logger: slog.Default()}
 
 	url := "https://example.com/hook"
 	job := &domain.Job{
@@ -123,32 +117,30 @@ func TestWorker_EnqueueWebhook(t *testing.T) {
 		WebhookHeaders: map[string]string{"X-A": "b"},
 	}
 	code := 200
-	w.enqueueWebhook(context.Background(), job, domain.WebhookEventJobCompleted, &code)
+	d := w.buildDelivery(context.Background(), job, domain.WebhookEventJobCompleted, &code)
 
-	if captured == nil {
-		t.Fatal("no delivery enqueued for a job with a webhook URL")
+	if d == nil {
+		t.Fatal("no delivery built for a job with a webhook URL")
 	}
-	if captured.URL != url || captured.UserID != "user-9" || captured.Event != domain.WebhookEventJobCompleted {
-		t.Errorf("delivery fields wrong: %+v", captured)
+	if d.URL != url || d.UserID != "user-9" || d.Event != domain.WebhookEventJobCompleted {
+		t.Errorf("delivery fields wrong: %+v", d)
 	}
-	if captured.JobID == nil || *captured.JobID != "job-42" {
-		t.Errorf("delivery JobID = %v, want job-42", captured.JobID)
+	if d.JobID == nil || *d.JobID != "job-42" {
+		t.Errorf("delivery JobID = %v, want job-42", d.JobID)
 	}
-	if captured.MaxAttempts != 7 {
-		t.Errorf("MaxAttempts = %d, want 7 (from worker config)", captured.MaxAttempts)
+	if d.MaxAttempts != 7 {
+		t.Errorf("MaxAttempts = %d, want 7 (from worker config)", d.MaxAttempts)
 	}
 	var payload WebhookPayload
-	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+	if err := json.Unmarshal(d.Payload, &payload); err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 	if payload.Event != "job.completed" || payload.JobID != "job-42" || payload.AttemptNum != 3 {
 		t.Errorf("payload = %+v, want event=job.completed job_id=job-42 attempt_num=3", payload)
 	}
 
-	// No webhook URL → no enqueue.
-	captured = nil
-	w.enqueueWebhook(context.Background(), &domain.Job{ID: "job-x", UserID: "u"}, domain.WebhookEventJobFailed, nil)
-	if captured != nil {
-		t.Error("enqueued a delivery for a job with no webhook URL")
+	// No webhook URL → nil (nothing to deliver).
+	if w.buildDelivery(context.Background(), &domain.Job{ID: "job-x", UserID: "u"}, domain.WebhookEventJobFailed, nil) != nil {
+		t.Error("built a delivery for a job with no webhook URL")
 	}
 }

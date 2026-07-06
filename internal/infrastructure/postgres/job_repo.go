@@ -145,8 +145,57 @@ func (r *JobRepository) UpdateHeartbeat(ctx context.Context, jobID string) error
 }
 
 func (r *JobRepository) Complete(ctx context.Context, jobID string) error {
-	// Leaving 'running' → drop the heartbeat sidecar row so it stays tiny.
-	_, err := r.pool.Exec(ctx,
+	return completeJob(ctx, r.pool, jobID)
+}
+
+func (r *JobRepository) Fail(ctx context.Context, jobID string, lastError string) error {
+	return failJob(ctx, r.pool, jobID, lastError)
+}
+
+// CompleteWithWebhook marks the job completed and, when delivery is non-nil, inserts
+// the webhook delivery row in the SAME transaction. This closes the outbox gap: a
+// crash can never leave a terminal job without its outbound delivery — the
+// at-least-once guarantee begins at commit, not after a second write. A nil
+// delivery (job had no webhook_url) behaves exactly like Complete.
+func (r *JobRepository) CompleteWithWebhook(ctx context.Context, jobID string, delivery *domain.WebhookDelivery) error {
+	return r.terminalWithWebhook(ctx, delivery, func(q querier) error {
+		return completeJob(ctx, q, jobID)
+	})
+}
+
+// FailWithWebhook is CompleteWithWebhook for a permanent failure.
+func (r *JobRepository) FailWithWebhook(ctx context.Context, jobID string, lastError string, delivery *domain.WebhookDelivery) error {
+	return r.terminalWithWebhook(ctx, delivery, func(q querier) error {
+		return failJob(ctx, q, jobID, lastError)
+	})
+}
+
+// terminalWithWebhook runs the job's terminal transition and (optionally) the
+// delivery insert inside one transaction, so both commit or neither does.
+func (r *JobRepository) terminalWithWebhook(ctx context.Context, delivery *domain.WebhookDelivery, terminal func(querier) error) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := terminal(tx); err != nil {
+		return err
+	}
+	if delivery != nil {
+		if _, err := insertWebhookDelivery(ctx, tx, delivery); err != nil {
+			return fmt.Errorf("enqueue webhook delivery: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
+}
+
+// completeJob leaves 'running' → drop the heartbeat sidecar row so it stays tiny.
+func completeJob(ctx context.Context, q querier, jobID string) error {
+	_, err := q.Exec(ctx,
 		`WITH done AS (
 			UPDATE jobs SET status = 'completed', completed_at = NOW(), updated_at = NOW()
 			WHERE id = $1 RETURNING id
@@ -155,8 +204,8 @@ func (r *JobRepository) Complete(ctx context.Context, jobID string) error {
 	return err
 }
 
-func (r *JobRepository) Fail(ctx context.Context, jobID string, lastError string) error {
-	_, err := r.pool.Exec(ctx,
+func failJob(ctx context.Context, q querier, jobID, lastError string) error {
+	_, err := q.Exec(ctx,
 		`WITH done AS (
 			UPDATE jobs SET status = 'failed', last_error = $2, updated_at = NOW()
 			WHERE id = $1 RETURNING id

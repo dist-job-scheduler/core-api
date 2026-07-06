@@ -73,7 +73,6 @@ func main() {
 		jobRepo,
 		attemptRepo,
 		creditRepo,
-		webhookDeliveryRepo,
 		alertNotifier,
 		lowBalance,
 		logger,
