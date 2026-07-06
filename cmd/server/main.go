@@ -106,6 +106,10 @@ func main() {
 	statsUsecase := usecase.NewStatsUsecase(statsRepo, creditRepo)
 	statsHandler := handler.NewStatsHandler(statsUsecase, logger)
 
+	// Webhook deliveries (read-only log; the scheduler produces the rows)
+	webhookDeliveryRepo := postgres.NewWebhookDeliveryRepository(pool)
+	webhookHandler := handler.NewWebhookHandler(webhookDeliveryRepo, logger)
+
 	metrics.Register()
 	checker := health.NewChecker(pool, logger, prometheus.DefaultRegisterer)
 
@@ -114,7 +118,7 @@ func main() {
 
 	srv := http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, bufferHandler, alertHandler, statsHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins, rateLimiter),
+		Handler: httptransport.NewRouter(logger, jobHandler, scheduleHandler, tokenHandler, billingHandler, signingHandler, bufferHandler, alertHandler, statsHandler, webhookHandler, userRepo, creditRepo, tokenRepo, cfg.ClerkJWKSURL, []byte(cfg.JWTSecret), cfg.CORSAllowedOrigins, rateLimiter),
 	}
 
 	metricsSrv := metrics.NewServer(":"+cfg.MetricsPort, checker)

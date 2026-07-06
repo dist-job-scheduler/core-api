@@ -12,12 +12,16 @@ type Config struct {
 	Env  string `env:"ENV" envDefault:"local" validate:"required,oneof=local staging production"`
 	Port string `env:"PORT" envDefault:"8080" validate:"required"`
 
-	DatabaseURL        string `env:"DATABASE_URL,required" validate:"required"`
-	WorkerCount        int    `env:"WORKER_COUNT" envDefault:"5" validate:"min=1,max=100"`
-	PollIntervalSec    int    `env:"POLL_INTERVAL_SEC" envDefault:"1" validate:"min=1,max=60"`
-	DispatchIntervalSec  int  `env:"DISPATCH_INTERVAL_SEC" envDefault:"5" validate:"min=1,max=60"`
-	DrainerConcurrency   int  `env:"DRAINER_CONCURRENCY" envDefault:"10" validate:"min=1,max=100"`
-	DrainerPollIntervalSec int `env:"DRAINER_POLL_INTERVAL_SEC" envDefault:"1" validate:"min=1,max=10"`
+	DatabaseURL            string `env:"DATABASE_URL,required" validate:"required"`
+	WorkerCount            int    `env:"WORKER_COUNT" envDefault:"5" validate:"min=1,max=100"`
+	PollIntervalSec        int    `env:"POLL_INTERVAL_SEC" envDefault:"1" validate:"min=1,max=60"`
+	DispatchIntervalSec    int    `env:"DISPATCH_INTERVAL_SEC" envDefault:"5" validate:"min=1,max=60"`
+	DrainerConcurrency     int    `env:"DRAINER_CONCURRENCY" envDefault:"10" validate:"min=1,max=100"`
+	DrainerPollIntervalSec int    `env:"DRAINER_POLL_INTERVAL_SEC" envDefault:"1" validate:"min=1,max=10"`
+	// Webhook delivery dispatcher: how often it drains due deliveries, and how many
+	// attempts each delivery gets before it is marked permanently failed.
+	WebhookDispatchIntervalSec int `env:"WEBHOOK_DISPATCH_INTERVAL_SEC" envDefault:"2" validate:"min=1,max=60"`
+	WebhookMaxAttempts         int `env:"WEBHOOK_MAX_ATTEMPTS" envDefault:"10" validate:"min=1,max=20"`
 	// Partition maintenance for job_attempts (range-partitioned by month).
 	PartitionMaintainIntervalSec int `env:"PARTITION_MAINTAIN_INTERVAL_SEC" envDefault:"21600" validate:"min=60"`
 	PartitionMonthsAhead         int `env:"PARTITION_MONTHS_AHEAD" envDefault:"3" validate:"min=1,max=24"`

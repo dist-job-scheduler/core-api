@@ -60,7 +60,8 @@ func TruncateAll(t *testing.T, pool *pgxpool.Pool) {
 				  AND tablename IN (
 					'credit_transactions','job_attempts','jobs','schedules',
 					'signing_secrets','api_tokens','user_credits',
-					'stripe_customers','users','magic_tokens'
+					'stripe_customers','users','magic_tokens',
+					'webhook_deliveries'
 				  )
 			LOOP
 				EXECUTE format('TRUNCATE %I CASCADE', tbl);

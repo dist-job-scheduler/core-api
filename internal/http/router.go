@@ -11,7 +11,7 @@ import (
 	sloggin "github.com/samber/slog-gin"
 )
 
-func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, bufferHandler *handler.BufferHandler, alertHandler *handler.AlertHandler, statsHandler *handler.StatsHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string, rateLimiter *middleware.RateLimiter) *gin.Engine {
+func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHandler *handler.ScheduleHandler, tokenHandler *handler.TokenHandler, billingHandler *handler.BillingHandler, signingHandler *handler.SigningHandler, bufferHandler *handler.BufferHandler, alertHandler *handler.AlertHandler, statsHandler *handler.StatsHandler, webhookHandler *handler.WebhookHandler, userRepo repository.UserRepository, creditRepo repository.CreditRepository, tokenRepo repository.APITokenRepository, jwksURL string, hmacKey []byte, corsAllowedOrigins string, rateLimiter *middleware.RateLimiter) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -90,6 +90,10 @@ func NewRouter(logger *slog.Logger, jobHandler *handler.JobHandler, scheduleHand
 	signing := r.Group("/signing-secret", authMW, ensureUser, rateLimiter.Middleware())
 	signing.GET("", signingHandler.Get)
 	signing.POST("/rotate", signingHandler.Rotate)
+
+	// Protected webhook delivery log (read-only; the scheduler produces the rows)
+	webhooks := r.Group("/webhooks", authMW, ensureUser, rateLimiter.Middleware())
+	webhooks.GET("/deliveries", webhookHandler.ListDeliveries)
 
 	// Webhook has no auth middleware — verified by Stripe signature
 	r.POST("/billing/webhook", billingHandler.HandleWebhook)
