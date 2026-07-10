@@ -272,10 +272,14 @@ func (u *JobUsecase) ListJobs(ctx context.Context, input ListJobsInput) (ListJob
 
 	var nextCursor *string
 	if len(jobs) == limit+1 {
-		last := jobs[limit]
+		// Drop the sentinel row and build the cursor from the last row we
+		// actually return. The repo's keyset filter is strict (`< cursor`), so
+		// pointing the cursor at the sentinel would exclude it from the next
+		// page and silently drop a job at every page boundary.
+		jobs = jobs[:limit]
+		last := jobs[limit-1]
 		s := encodeCursor(last.ScheduledAt, last.ID)
 		nextCursor = &s
-		jobs = jobs[:limit]
 	}
 
 	return ListJobsResult{Jobs: jobs, NextCursor: nextCursor}, nil
