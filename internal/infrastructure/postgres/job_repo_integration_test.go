@@ -390,6 +390,71 @@ func TestJobRepo_ListJobs_SearchFilters(t *testing.T) {
 	}
 }
 
+// TestJobRepo_ListJobs_ErrorSearch covers the last_error substring filter — the
+// debugging path behind the dashboard's Failures view ("show me everything that
+// failed with this upstream message").
+func TestJobRepo_ListJobs_ErrorSearch(t *testing.T) {
+	repo, userID := setupJobRepo(t)
+	ctx := context.Background()
+
+	seed := []struct {
+		url     string
+		failErr string // empty = leave job pending with no last_error
+	}{
+		{"https://api.example.com/a", "dial tcp: connection refused"},
+		{"https://api.example.com/b", "context deadline exceeded (timeout)"},
+		{"https://api.example.com/c", ""},
+	}
+	for i, s := range seed {
+		job := testutil.NewJob(testutil.WithUserID(userID), testutil.WithURL(s.url))
+		created, err := repo.Create(ctx, job)
+		if err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		if s.failErr != "" {
+			if err := repo.Fail(ctx, created.ID, s.failErr); err != nil {
+				t.Fatalf("fail %d: %v", i, err)
+			}
+		}
+	}
+
+	// Case-insensitive substring match on last_error finds the one refused job.
+	jobs, err := repo.ListJobs(ctx, repository.ListJobsInput{UserID: userID, ErrorSearch: "Connection Refused", Limit: 10})
+	if err != nil {
+		t.Fatalf("list error search: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("error search got %d jobs, want 1", len(jobs))
+	}
+	if jobs[0].URL != "https://api.example.com/a" {
+		t.Fatalf("got url %s, want the refused job", jobs[0].URL)
+	}
+
+	// A term present in no last_error returns nothing (the pending job has a NULL
+	// last_error and must never match an ILIKE filter).
+	jobs, err = repo.ListJobs(ctx, repository.ListJobsInput{UserID: userID, ErrorSearch: "no-such-error", Limit: 10})
+	if err != nil {
+		t.Fatalf("list error search miss: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("error search miss got %d jobs, want 0", len(jobs))
+	}
+
+	// Combining error search with a URL search narrows with AND semantics.
+	jobs, err = repo.ListJobs(ctx, repository.ListJobsInput{
+		UserID:      userID,
+		URLSearch:   "/b",
+		ErrorSearch: "timeout",
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("list url+error: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].URL != "https://api.example.com/b" {
+		t.Fatalf("url+error search got %d jobs, want the timeout job", len(jobs))
+	}
+}
+
 // TestJobRepo_ListJobs_SearchEscapesWildcards ensures a search term containing
 // LIKE metacharacters is matched literally rather than as a wildcard.
 func TestJobRepo_ListJobs_SearchEscapesWildcards(t *testing.T) {

@@ -3,6 +3,7 @@ package usecase_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -279,6 +280,45 @@ func TestListJobs_InvalidStatus(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrInvalidStatus) {
 		t.Fatalf("expected ErrInvalidStatus, got %v", err)
+	}
+}
+
+func TestListJobs_PassesErrorSearch(t *testing.T) {
+	t.Parallel()
+
+	var capturedInput repository.ListJobsInput
+	jobRepo := &testutil.MockJobRepository{
+		ListJobsFn: func(_ context.Context, input repository.ListJobsInput) ([]*domain.Job, error) {
+			capturedInput = input
+			return nil, nil
+		},
+	}
+	uc := usecase.NewJobUsecase(jobRepo, &testutil.MockAttemptRepository{}, &testutil.MockCreditRepository{})
+
+	_, err := uc.ListJobs(context.Background(), usecase.ListJobsInput{
+		UserID:      "user-1",
+		ErrorSearch: "  connection refused  ",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The term is trimmed and forwarded to the repository verbatim.
+	if capturedInput.ErrorSearch != "connection refused" {
+		t.Fatalf("expected trimmed ErrorSearch %q, got %q", "connection refused", capturedInput.ErrorSearch)
+	}
+}
+
+func TestListJobs_ErrorSearchTooLong(t *testing.T) {
+	t.Parallel()
+
+	uc := usecase.NewJobUsecase(&testutil.MockJobRepository{}, &testutil.MockAttemptRepository{}, &testutil.MockCreditRepository{})
+
+	_, err := uc.ListJobs(context.Background(), usecase.ListJobsInput{
+		UserID:      "user-1",
+		ErrorSearch: strings.Repeat("x", 513),
+	})
+	if !errors.Is(err, domain.ErrInvalidSearch) {
+		t.Fatalf("expected ErrInvalidSearch, got %v", err)
 	}
 }
 

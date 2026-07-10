@@ -324,6 +324,10 @@ func (r *JobRepository) ListJobs(ctx context.Context, input repository.ListJobsI
 		args = append(args, "%"+escapeLike(input.URLSearch)+"%")
 		where = append(where, fmt.Sprintf("url ILIKE $%d", len(args)))
 	}
+	if input.ErrorSearch != "" {
+		args = append(args, "%"+escapeLike(input.ErrorSearch)+"%")
+		where = append(where, fmt.Sprintf("last_error ILIKE $%d", len(args)))
+	}
 	if input.ScheduledAfter != nil {
 		args = append(args, *input.ScheduledAfter)
 		where = append(where, fmt.Sprintf("scheduled_at >= $%d", len(args)))
